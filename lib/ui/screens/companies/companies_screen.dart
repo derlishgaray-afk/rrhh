@@ -1,0 +1,247 @@
+import 'package:flutter/material.dart';
+
+import '../../../data/database/app_database.dart';
+import '../../../services/company_service.dart';
+import '../../../services/department_service.dart';
+import 'departments_screen.dart';
+import 'company_form_dialog.dart';
+
+class CompaniesScreen extends StatefulWidget {
+  const CompaniesScreen({
+    required this.service,
+    required this.departmentService,
+    required this.companyId,
+    required this.activeCompanyId,
+    required this.onCompanyDataChanged,
+    required this.onSetActiveCompany,
+    super.key,
+  });
+
+  final CompanyService service;
+  final DepartmentService departmentService;
+  final int companyId;
+  final int? activeCompanyId;
+  final Future<void> Function() onCompanyDataChanged;
+  final Future<void> Function(int companyId) onSetActiveCompany;
+
+  @override
+  State<CompaniesScreen> createState() => _CompaniesScreenState();
+}
+
+class _CompaniesScreenState extends State<CompaniesScreen> {
+  List<Company> _companies = const [];
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCompanies();
+  }
+
+  Future<void> _loadCompanies() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final companies = await widget.service.listCompanies();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _companies = companies;
+      });
+    } catch (_) {
+      _showError('No se pudieron cargar las empresas.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openCompanyForm({Company? company}) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) =>
+          CompanyFormDialog(service: widget.service, company: company),
+    );
+
+    if (saved == true) {
+      await _loadCompanies();
+      await widget.onCompanyDataChanged();
+    }
+  }
+
+  Future<void> _deleteCompany(Company company) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Eliminar empresa'),
+        content: Text('Desea eliminar ${company.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    try {
+      await widget.service.deleteCompany(company.id);
+      if (!mounted) {
+        return;
+      }
+
+      await _loadCompanies();
+      await widget.onCompanyDataChanged();
+    } catch (_) {
+      _showError('No se pudo eliminar la empresa.');
+    }
+  }
+
+  void _showError(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: DefaultTabController(
+        length: 2,
+        child: Column(
+          children: [
+            const TabBar(
+              tabs: [
+                Tab(icon: Icon(Icons.business), text: 'Empresas'),
+                Tab(icon: Icon(Icons.account_tree), text: 'Departamentos'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _buildCompaniesTab(),
+                  DepartmentsScreen(
+                    service: widget.departmentService,
+                    companyId: widget.companyId,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompaniesTab() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Empresas de la holding',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: () => _openCompanyForm(),
+              icon: const Icon(Icons.add_business),
+              label: const Text('Nueva empresa'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _companies.isEmpty
+              ? const Center(child: Text('No hay empresas registradas.'))
+              : SingleChildScrollView(
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Activa')),
+                      DataColumn(label: Text('Nombre')),
+                      DataColumn(label: Text('RUC')),
+                      DataColumn(label: Text('Telefono')),
+                      DataColumn(label: Text('Estado')),
+                      DataColumn(label: Text('Acciones')),
+                    ],
+                    rows: _companies
+                        .map(
+                          (company) => DataRow(
+                            cells: [
+                              DataCell(
+                                Icon(
+                                  widget.activeCompanyId == company.id
+                                      ? Icons.check_circle
+                                      : Icons.radio_button_unchecked,
+                                  color: widget.activeCompanyId == company.id
+                                      ? Colors.green
+                                      : null,
+                                ),
+                              ),
+                              DataCell(Text(company.name)),
+                              DataCell(Text(company.ruc ?? '-')),
+                              DataCell(Text(company.phone ?? '-')),
+                              DataCell(
+                                Text(company.active ? 'Activa' : 'Inactiva'),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          widget.onSetActiveCompany(company.id),
+                                      child: const Text('Seleccionar'),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Editar',
+                                      onPressed: () =>
+                                          _openCompanyForm(company: company),
+                                      icon: const Icon(Icons.edit),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Eliminar',
+                                      onPressed: () => _deleteCompany(company),
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
