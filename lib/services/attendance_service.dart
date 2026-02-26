@@ -1,12 +1,21 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../security/security_constants.dart';
+import 'authorization_service.dart';
 
 class AttendanceService {
-  AttendanceService(this._attendanceDao, this._employeesDao);
+  AttendanceService(
+    this._attendanceDao,
+    this._employeesDao,
+    this._payrollDao,
+    this._authorizationService,
+  );
 
   final AttendanceDao _attendanceDao;
   final EmployeesDao _employeesDao;
+  final PayrollDao _payrollDao;
+  final AuthorizationService _authorizationService;
 
   Future<int> createAttendanceEvent({
     required int companyId,
@@ -22,6 +31,12 @@ class AttendanceService {
     int? breakMinutes,
     String? notes,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceEdit,
+      companyId: companyId,
+    );
+    await _ensurePayrollMonthUnlocked(companyId: companyId, date: date);
+
     final input = await _sanitizeAndValidate(
       companyId: companyId,
       employeeId: employeeId,
@@ -69,6 +84,24 @@ class AttendanceService {
     int? breakMinutes,
     String? notes,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceEdit,
+      companyId: currentEvent.companyId,
+    );
+    await _ensurePayrollMonthUnlocked(
+      companyId: currentEvent.companyId,
+      date: currentEvent.date,
+    );
+    final isSamePeriod =
+        currentEvent.date.year == date.year &&
+        currentEvent.date.month == date.month;
+    if (!isSamePeriod) {
+      await _ensurePayrollMonthUnlocked(
+        companyId: currentEvent.companyId,
+        date: date,
+      );
+    }
+
     final input = await _sanitizeAndValidate(
       companyId: currentEvent.companyId,
       employeeId: employeeId,
@@ -111,6 +144,12 @@ class AttendanceService {
     String? eventType,
     String? notes,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceEdit,
+      companyId: companyId,
+    );
+    await _ensurePayrollMonthUnlocked(companyId: companyId, date: date);
+
     if (companyId <= 0 || employeeId <= 0) {
       throw ArgumentError('La empresa o empleado no es valido.');
     }
@@ -253,9 +292,46 @@ class AttendanceService {
     );
   }
 
-  Future<int> deleteAttendanceEvent(int eventId) {
+  Future<void> upsertDailyAttendanceFromImport({
+    required int companyId,
+    required int employeeId,
+    required DateTime date,
+    String? checkInTime,
+    String? checkOutTime,
+    int? breakMinutes,
+    String? eventType,
+    String? notes,
+  }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceImportClock,
+      companyId: companyId,
+    );
+    await upsertDailyAttendance(
+      companyId: companyId,
+      employeeId: employeeId,
+      date: date,
+      checkInTime: checkInTime,
+      checkOutTime: checkOutTime,
+      breakMinutes: breakMinutes,
+      eventType: eventType,
+      notes: notes,
+    );
+  }
+
+  Future<int> deleteAttendanceEvent(int eventId) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceDelete,
+    );
     if (eventId <= 0) {
       throw ArgumentError('El evento no es valido.');
+    }
+
+    final event = await _attendanceDao.getAttendanceEventById(eventId);
+    if (event != null) {
+      await _ensurePayrollMonthUnlocked(
+        companyId: event.companyId,
+        date: event.date,
+      );
     }
 
     return _attendanceDao.deleteAttendanceEvent(eventId);
@@ -265,13 +341,36 @@ class AttendanceService {
     required int companyId,
     required int year,
     required int month,
-  }) {
+  }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceRead,
+      companyId: companyId,
+    );
     _validatePeriod(companyId: companyId, year: year, month: month);
     return _attendanceDao.getAttendanceByMonth(
       companyId: companyId,
       year: year,
       month: month,
     );
+  }
+
+  Future<bool> isAttendancePeriodLocked({
+    required int companyId,
+    required int year,
+    required int month,
+  }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.attendanceRead,
+      companyId: companyId,
+    );
+    _validatePeriod(companyId: companyId, year: year, month: month);
+
+    final run = await _payrollDao.getPayrollRunByPeriod(
+      companyId: companyId,
+      year: year,
+      month: month,
+    );
+    return run?.isLocked ?? false;
   }
 
   Future<_AttendanceInput> _sanitizeAndValidate({
@@ -631,6 +730,23 @@ class AttendanceService {
 
     final normalized = value.trim();
     return normalized.isEmpty ? null : normalized;
+  }
+
+  Future<void> _ensurePayrollMonthUnlocked({
+    required int companyId,
+    required DateTime date,
+  }) async {
+    final run = await _payrollDao.getPayrollRunByPeriod(
+      companyId: companyId,
+      year: date.year,
+      month: date.month,
+    );
+    if (run?.isLocked ?? false) {
+      final month = date.month.toString().padLeft(2, '0');
+      throw ArgumentError(
+        'No se puede editar asistencia de $month/${date.year} porque la liquidacion esta guardada y bloqueada.',
+      );
+    }
   }
 }
 

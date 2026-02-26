@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
 import '../../../services/attendance_service.dart';
+import '../../../services/employee_name_formatter.dart';
 
 class AttendanceFormDialog extends StatefulWidget {
   const AttendanceFormDialog({
@@ -99,6 +100,7 @@ class _AttendanceFormDialogState extends State<AttendanceFormDialog> {
     final now = DateTime.now();
     final selectedDate = await showDatePicker(
       context: context,
+      locale: const Locale('es', 'PY'),
       initialDate: _date ?? now,
       firstDate: DateTime(1970),
       lastDate: DateTime(now.year + 2, 12, 31),
@@ -238,7 +240,7 @@ class _AttendanceFormDialogState extends State<AttendanceFormDialog> {
                       .map(
                         (employee) => DropdownMenuItem<int>(
                           value: employee.id,
-                          child: Text(employee.fullName),
+                          child: Text(employeeDisplayName(employee)),
                         ),
                       )
                       .toList(),

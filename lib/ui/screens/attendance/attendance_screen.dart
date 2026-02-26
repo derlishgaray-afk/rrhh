@@ -11,7 +11,9 @@ import 'package:printing/printing.dart';
 
 import '../../../data/database/app_database.dart';
 import '../../../services/attendance_service.dart';
+import '../../../services/attendance_notes_markers.dart';
 import '../../../services/company_settings_service.dart';
+import '../../../services/employee_name_formatter.dart';
 import '../../../services/employees_service.dart';
 
 class AttendanceScreen extends StatefulWidget {
@@ -21,6 +23,7 @@ class AttendanceScreen extends StatefulWidget {
     required this.companySettingsService,
     required this.companyId,
     required this.companyName,
+    required this.canImportClock,
     super.key,
   });
 
@@ -29,6 +32,7 @@ class AttendanceScreen extends StatefulWidget {
   final CompanySettingsService companySettingsService;
   final int companyId;
   final String companyName;
+  final bool canImportClock;
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -74,6 +78,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _isImporting = false;
   bool _isApplyingSpecialAbsence = false;
   bool _isAutoCompletingWithoutClock = false;
+  bool _isSelectedPeriodLocked = false;
   late int _selectedYear;
   late int _selectedMonth;
   late int _selectedDay;
@@ -151,6 +156,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final rows = <int, _EditableAttendanceRow>{};
     for (final employee in employees) {
       final event = selectedDayEvents[employee.id];
+      final detail = attendanceUserDetailFromNotes(event?.notes) ?? '';
       rows[employee.id] = _EditableAttendanceRow(
         employee: employee,
         event: event,
@@ -164,7 +170,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           text: (event?.breakMinutes ?? _defaultBreakMinutes).toString(),
         ),
         absenceType: _absenceTypeFromEventType(event?.eventType),
-        detailController: TextEditingController(text: event?.notes ?? ''),
+        detailController: TextEditingController(text: detail),
+        sundaySurcharge100Enabled: hasSundaySurcharge100Marker(event?.notes),
       );
     }
 
@@ -185,11 +192,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           month: _selectedMonth,
         ),
         widget.companySettingsService.getOrCreateSettings(widget.companyId),
+        widget.service.isAttendancePeriodLocked(
+          companyId: widget.companyId,
+          year: _selectedYear,
+          month: _selectedMonth,
+        ),
       ]);
 
       final activeEmployees = results[0] as List<Employee>;
       final events = results[1] as List<AttendanceEvent>;
       final settings = results[2] as CompanySetting;
+      final isPeriodLocked = results[3] as bool;
       final rows = _buildRows(employees: activeEmployees, events: events);
       final holidayDates = widget.companySettingsService.parseHolidayDates(
         settings.holidayDates,
@@ -206,6 +219,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _activeEmployees = activeEmployees;
         _events = events;
         _holidayDates = holidayDates;
+        _isSelectedPeriodLocked = isPeriodLocked;
         _replaceRows(rows);
       });
     } catch (_) {
@@ -220,11 +234,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Future<void> _reloadMonthEvents() async {
-    final events = await widget.service.listAttendanceByMonth(
-      companyId: widget.companyId,
-      year: _selectedYear,
-      month: _selectedMonth,
-    );
+    final results = await Future.wait<dynamic>([
+      widget.service.listAttendanceByMonth(
+        companyId: widget.companyId,
+        year: _selectedYear,
+        month: _selectedMonth,
+      ),
+      widget.service.isAttendancePeriodLocked(
+        companyId: widget.companyId,
+        year: _selectedYear,
+        month: _selectedMonth,
+      ),
+    ]);
+    final events = results[0] as List<AttendanceEvent>;
+    final isPeriodLocked = results[1] as bool;
 
     final rows = _buildRows(employees: _activeEmployees, events: events);
     if (!mounted) {
@@ -236,6 +259,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     setState(() {
       _events = events;
+      _isSelectedPeriodLocked = isPeriodLocked;
       _replaceRows(rows);
     });
   }
@@ -459,8 +483,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             checkIn: event.checkInTime ?? '',
             checkOut: event.checkOutTime ?? '',
             breakMinutes: event.breakMinutes?.toString() ?? '',
-            absenceLabel: 'Sin ausencia',
-            detail: event.notes ?? '',
+            absenceLabel: 'Presente',
+            detail: attendanceUserDetailFromNotes(event.notes) ?? '',
             hoursLabel: workedHours == null
                 ? ''
                 : workedHours.toStringAsFixed(2),
@@ -480,7 +504,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           checkOut: event.checkOutTime ?? '',
           breakMinutes: event.breakMinutes?.toString() ?? '',
           absenceLabel: _eventTypeLabel(event.eventType),
-          detail: event.notes ?? '',
+          detail: attendanceUserDetailFromNotes(event.notes) ?? '',
           hoursLabel: event.hoursWorked?.toStringAsFixed(2) ?? '',
           statusLabel: _eventTypeLabel(event.eventType),
           isPending: false,
@@ -547,7 +571,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
           ),
           pw.SizedBox(height: 4),
-          pw.Text('Empleado: ${employee.fullName}'),
+          pw.Text('Empleado: ${employeeDisplayName(employee)}'),
           pw.Text('Empresa: $_summaryCompanyName'),
           pw.Text('Documento: ${employee.documentNumber}'),
           pw.Text('Periodo: $periodLabel'),
@@ -626,7 +650,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   String _employeeMonthlySummaryBaseFileName(Employee employee) {
-    final employeePart = _sanitizeFileNamePart(employee.fullName);
+    final employeePart = _sanitizeFileNamePart(employeeDisplayName(employee));
     final month = _selectedMonth.toString().padLeft(2, '0');
     return 'asistencia_empleado_${employeePart}_${_selectedYear}_$month';
   }
@@ -650,8 +674,26 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return '$day/$month/${date.year}';
   }
 
+  String _selectedPeriodLabel() {
+    final month = _selectedMonth.toString().padLeft(2, '0');
+    return '$month/$_selectedYear';
+  }
+
+  bool _isEditionBlockedByLockedPeriod() {
+    if (!_isSelectedPeriodLocked) {
+      return false;
+    }
+    _showInfo(
+      'No se puede editar asistencia de ${_selectedPeriodLabel()} porque la liquidacion esta guardada y bloqueada.',
+    );
+    return true;
+  }
+
   Future<void> _importClockMarks() async {
     if (_isLoading || _isImporting) {
+      return;
+    }
+    if (_isEditionBlockedByLockedPeriod()) {
       return;
     }
 
@@ -726,7 +768,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<List<Employee>> _employeesForImportScope() async {
     switch (_selectedImportScope) {
       case _AttendanceImportScope.global:
-        return widget.employeesService.listEmployeesAllCompanies();
+        return widget.employeesService.listEmployeesAccessibleCompanies();
       case _AttendanceImportScope.activeCompany:
         return _activeEmployees;
     }
@@ -769,9 +811,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         continue;
       }
 
+      final baseName = employeeDisplayName(employee);
       final displayName = _selectedImportScope == _AttendanceImportScope.global
-          ? '${employee.fullName} (Emp. ${employee.companyId})'
-          : employee.fullName;
+          ? '$baseName (Emp. ${employee.companyId})'
+          : baseName;
 
       if (!employee.biometricClockEnabled) {
         rows.add(
@@ -867,6 +910,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Future<void> _applyImportPreview(List<_ImportPreviewRow> rows) async {
+    if (_isEditionBlockedByLockedPeriod()) {
+      return;
+    }
+
     setState(() {
       _isImporting = true;
     });
@@ -904,7 +951,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             _defaultBreakMinutes;
 
         try {
-          await widget.service.upsertDailyAttendance(
+          await widget.service.upsertDailyAttendanceFromImport(
             companyId: companyId,
             employeeId: employeeId,
             date: _selectedDate,
@@ -1272,8 +1319,15 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return entries;
   }
 
-  Future<void> _saveRow(_EditableAttendanceRow row) async {
+  Future<void> _saveRow(
+    _EditableAttendanceRow row, {
+    bool? sundaySurcharge100Override,
+    String? successMessage,
+  }) async {
     if (row.isSaving) {
+      return;
+    }
+    if (_isEditionBlockedByLockedPeriod()) {
       return;
     }
 
@@ -1293,6 +1347,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return;
       }
     }
+    final storedNotes = _buildStoredNotesForRow(
+      row: row,
+      eventType: eventType,
+      sundaySurcharge100Override: sundaySurcharge100Override,
+    );
 
     setState(() {
       row.isSaving = true;
@@ -1307,13 +1366,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         checkOutTime: row.checkOutController.text,
         breakMinutes: breakMinutes,
         eventType: eventType,
-        notes: row.detailController.text,
+        notes: storedNotes,
       );
       await _reloadMonthEvents();
       if (!mounted) {
         return;
       }
-      _showInfo('Asistencia guardada para ${row.employee.fullName}.');
+      _showInfo(
+        successMessage ??
+            'Asistencia guardada para ${employeeDisplayName(row.employee)}.',
+      );
     } on ArgumentError catch (error) {
       _showError(error.message?.toString() ?? 'Datos invalidos.');
     } catch (error) {
@@ -1328,6 +1390,56 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         }
       }
     }
+  }
+
+  bool _canApplySundaySurcharge(_EditableAttendanceRow row) {
+    return _isSelectedDateSunday &&
+        row.employee.allowOvertime &&
+        row.absenceType == _AttendanceAbsenceType.none;
+  }
+
+  String? _buildStoredNotesForRow({
+    required _EditableAttendanceRow row,
+    required String? eventType,
+    bool? sundaySurcharge100Override,
+  }) {
+    final isPresentEvent = eventType == null;
+    final sundaySurcharge100Enabled =
+        (sundaySurcharge100Override ?? row.sundaySurcharge100Enabled) &&
+        isPresentEvent &&
+        _canApplySundaySurcharge(row);
+
+    // Siempre devolvemos string para que AttendanceService tome `notes` como
+    // input explicito y permita limpiar marcadores/notas cuando corresponda.
+    return composeAttendanceNotes(
+          detail: row.detailController.text,
+          sundaySurcharge100Enabled: sundaySurcharge100Enabled,
+        ) ??
+        '';
+  }
+
+  Future<void> _toggleSundaySurcharge(_EditableAttendanceRow row) async {
+    if (row.isSaving || !_canApplySundaySurcharge(row)) {
+      return;
+    }
+    final hasAnyMarking =
+        row.checkInController.text.trim().isNotEmpty ||
+        row.checkOutController.text.trim().isNotEmpty;
+    if (!hasAnyMarking) {
+      _showInfo(
+        'Registre entrada y/o salida antes de aplicar recargo domingo 100%.',
+      );
+      return;
+    }
+
+    final enableSurcharge = !row.sundaySurcharge100Enabled;
+    final actionLabel = enableSurcharge ? 'aplicado' : 'quitado';
+    await _saveRow(
+      row,
+      sundaySurcharge100Override: enableSurcharge,
+      successMessage:
+          'Recargo domingo 100% $actionLabel para ${employeeDisplayName(row.employee)}.',
+    );
   }
 
   int? _parseBreakMinutes(String text) {
@@ -1349,6 +1461,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _isImporting ||
         _isApplyingSpecialAbsence ||
         _isAutoCompletingWithoutClock) {
+      return;
+    }
+    if (_isEditionBlockedByLockedPeriod()) {
       return;
     }
 
@@ -1410,7 +1525,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             checkOutTime: effectiveCheckOut,
             breakMinutes: effectiveBreakMinutes,
             eventType: 'presente',
-            notes: row.detailController.text,
+            notes: _buildStoredNotesForRow(row: row, eventType: null),
           );
           completedCount += 1;
         } catch (_) {
@@ -1518,22 +1633,40 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
   }
 
+  String _normalizeSearchText(String raw) {
+    return raw
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\u00e1]'), 'a')
+        .replaceAll(RegExp(r'[\u00e9]'), 'e')
+        .replaceAll(RegExp(r'[\u00ed]'), 'i')
+        .replaceAll(RegExp(r'[\u00f3]'), 'o')
+        .replaceAll(RegExp(r'[\u00fa\u00fc]'), 'u')
+        .replaceAll(RegExp(r'[\u00f1]'), 'n')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
   List<_EditableAttendanceRow> _visibleRows() {
-    final normalizedQuery = _searchController.text.trim().toLowerCase();
+    final normalizedQuery = _normalizeSearchText(_searchController.text);
     final rows = _rowsByEmployeeId.values.where((row) {
+      final employeeName = _normalizeSearchText(
+        employeeDisplayName(row.employee),
+      );
+      final statusOfDay = _normalizeSearchText(_statusLabel(row));
       if (normalizedQuery.isNotEmpty &&
-          !row.employee.fullName.toLowerCase().contains(normalizedQuery)) {
+          !employeeName.contains(normalizedQuery) &&
+          !statusOfDay.contains(normalizedQuery)) {
         return false;
       }
 
       return _matchesFilter(row);
     }).toList();
 
-    rows.sort(
-      (a, b) => a.employee.fullName.toLowerCase().compareTo(
-        b.employee.fullName.toLowerCase(),
-      ),
-    );
+    rows.sort((a, b) {
+      final left = employeeDisplayName(a.employee).toLowerCase();
+      final right = employeeDisplayName(b.employee).toLowerCase();
+      return left.compareTo(right);
+    });
 
     return rows;
   }
@@ -1639,7 +1772,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       return false;
     }
 
-    final sourceText = (row.event?.notes ?? row.detailController.text).trim();
+    final sourceText =
+        attendanceUserDetailFromNotes(row.event?.notes) ??
+        attendanceUserDetailFromNotes(row.detailController.text) ??
+        '';
     if (sourceText.isEmpty) {
       return true;
     }
@@ -1658,7 +1794,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       return false;
     }
 
-    return (event.notes ?? '').trim().toLowerCase() ==
+    return (attendanceUserDetailFromNotes(event.notes) ?? '')
+            .trim()
+            .toLowerCase() ==
         specialLabel.toLowerCase();
   }
 
@@ -1677,6 +1815,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _isLoading ||
         _isImporting ||
         _isApplyingSpecialAbsence) {
+      return;
+    }
+    if (_isEditionBlockedByLockedPeriod()) {
       return;
     }
 
@@ -2325,8 +2466,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         ? 140.0
         : (isCompactTable ? 156.0 : 176.0);
     final hoursColWidth = isVeryCompactTable ? 48.0 : 56.0;
-    final statusColWidth = isVeryCompactTable ? 84.0 : 92.0;
-    final buttonColWidth = isVeryCompactTable ? 88.0 : 94.0;
+    final statusColWidth = _isSelectedDateSunday
+        ? (isVeryCompactTable ? 76.0 : 84.0)
+        : (isVeryCompactTable ? 84.0 : 92.0);
+    final buttonColWidth = _isSelectedDateSunday
+        ? (isVeryCompactTable ? 176.0 : 192.0)
+        : (isVeryCompactTable ? 88.0 : 94.0);
     final tableColumnSpacing = isVeryCompactTable
         ? 8.0
         : (isCompactTable ? 10.0 : 14.0);
@@ -2336,6 +2481,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final dataRowMaxHeight = isVeryCompactTable ? 52.0 : 56.0;
     final hasSpecialAbsenceApplied =
         _isSelectedDateSpecial && _hasAppliedSpecialAbsenceForTargets();
+    final isEditionLocked = _isSelectedPeriodLocked;
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -2437,10 +2583,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 width: 320,
                 child: TextField(
                   controller: _searchController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Buscar empleado',
-                    hintText: 'Nombre o apellido',
-                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Nombre, apellido o estado',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.trim().isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Limpiar busqueda',
+                            onPressed: _searchController.clear,
+                            icon: const Icon(Icons.close),
+                          ),
                   ),
                 ),
               ),
@@ -2482,42 +2635,45 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   });
                 },
               ),
-              DropdownButton<_AttendanceImportScope>(
-                value: _selectedImportScope,
-                items: _attendanceImportScopeLabels.entries
-                    .map(
-                      (entry) => DropdownMenuItem<_AttendanceImportScope>(
-                        value: entry.key,
-                        child: Text(entry.value),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _isImporting || _isLoading
-                    ? null
-                    : (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setState(() {
-                          _selectedImportScope = value;
-                        });
-                      },
-              ),
-              FilledButton.icon(
-                onPressed: _isImporting || _isLoading
-                    ? null
-                    : _importClockMarks,
-                icon: const Icon(Icons.upload_file),
-                label: Text(
-                  _isImporting ? 'Importando...' : 'Importar marcaciones',
+              if (widget.canImportClock)
+                DropdownButton<_AttendanceImportScope>(
+                  value: _selectedImportScope,
+                  items: _attendanceImportScopeLabels.entries
+                      .map(
+                        (entry) => DropdownMenuItem<_AttendanceImportScope>(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isImporting || _isLoading || isEditionLocked
+                      ? null
+                      : (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          setState(() {
+                            _selectedImportScope = value;
+                          });
+                        },
                 ),
-              ),
+              if (widget.canImportClock)
+                FilledButton.icon(
+                  onPressed: _isImporting || _isLoading || isEditionLocked
+                      ? null
+                      : _importClockMarks,
+                  icon: const Icon(Icons.upload_file),
+                  label: Text(
+                    _isImporting ? 'Importando...' : 'Importar marcaciones',
+                  ),
+                ),
               if (_selectedOvertimeFilter ==
                   _AttendanceOvertimeFilter.sinMarcacion)
                 FilledButton.icon(
                   onPressed:
                       _isImporting ||
                           _isLoading ||
+                          isEditionLocked ||
                           _isApplyingSpecialAbsence ||
                           _isAutoCompletingWithoutClock
                       ? null
@@ -2532,7 +2688,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               if (_isSelectedDateSpecial)
                 FilledButton.icon(
                   onPressed:
-                      _isImporting || _isLoading || _isApplyingSpecialAbsence
+                      _isImporting ||
+                          _isLoading ||
+                          isEditionLocked ||
+                          _isApplyingSpecialAbsence
                       ? null
                       : _applySpecialDayAbsence,
                   icon: Icon(
@@ -2550,6 +2709,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 ),
             ],
           ),
+          if (isEditionLocked)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                'Asistencia en modo solo lectura: la liquidacion de ${_selectedPeriodLabel()} esta guardada y bloqueada.',
+                style: TextStyle(
+                  color: Colors.red.shade700,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           const SizedBox(height: 16),
           Expanded(
             child: _isLoading
@@ -2633,13 +2803,24 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                           final isSpecialLocked =
                               _isApplyingSpecialAbsence ||
                               _isRowLockedBySpecialAbsence(row);
+                          final canEditRow =
+                              !row.isSaving &&
+                              !isSpecialLocked &&
+                              !isEditionLocked;
+                          final showSundaySurchargeButton =
+                              _isSelectedDateSunday &&
+                              row.employee.allowOvertime;
+                          final canToggleSundaySurcharge =
+                              showSundaySurchargeButton &&
+                              canEditRow &&
+                              row.absenceType == _AttendanceAbsenceType.none;
                           return DataRow(
                             cells: [
                               DataCell(
                                 SizedBox(
                                   width: employeeColWidth,
                                   child: Text(
-                                    row.employee.fullName,
+                                    employeeDisplayName(row.employee),
                                     style: TextStyle(fontSize: rowFontSize),
                                   ),
                                 ),
@@ -2650,8 +2831,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                   child: TextField(
                                     controller: row.checkInController,
                                     enabled:
-                                        !row.isSaving &&
-                                        !isSpecialLocked &&
+                                        canEditRow &&
                                         row.absenceType ==
                                             _AttendanceAbsenceType.none,
                                     onChanged: (_) => setState(() {}),
@@ -2685,8 +2865,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                   child: TextField(
                                     controller: row.checkOutController,
                                     enabled:
-                                        !row.isSaving &&
-                                        !isSpecialLocked &&
+                                        canEditRow &&
                                         row.absenceType ==
                                             _AttendanceAbsenceType.none,
                                     onChanged: (_) => setState(() {}),
@@ -2720,8 +2899,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                   child: TextField(
                                     controller: row.breakController,
                                     enabled:
-                                        !row.isSaving &&
-                                        !isSpecialLocked &&
+                                        canEditRow &&
                                         row.absenceType ==
                                             _AttendanceAbsenceType.none,
                                     onChanged: (_) => setState(() {}),
@@ -2783,8 +2961,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                                       ),
                                                 )
                                                 .toList(),
-                                            onChanged:
-                                                row.isSaving || isSpecialLocked
+                                            onChanged: !canEditRow
                                                 ? null
                                                 : (value) {
                                                     if (value == null) {
@@ -2812,7 +2989,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                   width: detailColWidth,
                                   child: TextField(
                                     controller: row.detailController,
-                                    enabled: !row.isSaving && !isSpecialLocked,
+                                    enabled: canEditRow,
                                     style: TextStyle(fontSize: inputFontSize),
                                     decoration: InputDecoration(
                                       hintText: 'Detalle',
@@ -2846,29 +3023,76 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                               DataCell(
                                 SizedBox(
                                   width: buttonColWidth,
-                                  child: FilledButton(
-                                    style: FilledButton.styleFrom(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: isVeryCompactTable ? 6 : 8,
-                                        vertical: isVeryCompactTable ? 6 : 8,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Expanded(
+                                        child: FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isVeryCompactTable
+                                                  ? 6
+                                                  : 8,
+                                              vertical: isVeryCompactTable
+                                                  ? 6
+                                                  : 8,
+                                            ),
+                                            textStyle: TextStyle(
+                                              fontSize: inputFontSize,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          onPressed: !canEditRow
+                                              ? null
+                                              : () => _saveRow(row),
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            child: Text(
+                                              row.isSaving
+                                                  ? 'Guardando...'
+                                                  : 'Guardar',
+                                              maxLines: 1,
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                      textStyle: TextStyle(
-                                        fontSize: inputFontSize,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    onPressed: row.isSaving || isSpecialLocked
-                                        ? null
-                                        : () => _saveRow(row),
-                                    child: FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text(
-                                        row.isSaving
-                                            ? 'Guardando...'
-                                            : 'Guardar',
-                                        maxLines: 1,
-                                      ),
-                                    ),
+                                      if (showSundaySurchargeButton) ...[
+                                        const SizedBox(width: 6),
+                                        SizedBox(
+                                          width: isVeryCompactTable ? 66 : 74,
+                                          child: OutlinedButton(
+                                            style: OutlinedButton.styleFrom(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: isVeryCompactTable
+                                                    ? 6
+                                                    : 8,
+                                                vertical: isVeryCompactTable
+                                                    ? 6
+                                                    : 8,
+                                              ),
+                                              textStyle: TextStyle(
+                                                fontSize: inputFontSize,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            onPressed: canToggleSundaySurcharge
+                                                ? () => _toggleSundaySurcharge(
+                                                    row,
+                                                  )
+                                                : null,
+                                            child: FittedBox(
+                                              fit: BoxFit.scaleDown,
+                                              child: Text(
+                                                row.sundaySurcharge100Enabled
+                                                    ? 'Quitar 100%'
+                                                    : '100% Aplicar',
+                                                maxLines: 1,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                               ),
@@ -2894,6 +3118,7 @@ class _EditableAttendanceRow {
     required this.breakController,
     required this.absenceType,
     required this.detailController,
+    required this.sundaySurcharge100Enabled,
   });
 
   final Employee employee;
@@ -2903,6 +3128,7 @@ class _EditableAttendanceRow {
   final TextEditingController breakController;
   _AttendanceAbsenceType absenceType;
   final TextEditingController detailController;
+  bool sundaySurcharge100Enabled;
   bool isSaving = false;
 
   void dispose() {
@@ -3112,6 +3338,20 @@ class _AttendanceMonthCalendarDialog extends StatelessWidget {
     'Sab',
     'Dom',
   ];
+  static const List<String> _monthNames = [
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -3124,7 +3364,18 @@ class _AttendanceMonthCalendarDialog extends StatelessWidget {
     }
 
     return AlertDialog(
-      title: const Text('Calendario de asistencia'),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Calendario de asistencia'),
+          const SizedBox(height: 2),
+          Text(
+            '${_monthNames[month - 1]} $year',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -3305,15 +3556,17 @@ class _EmployeeMonthlySummaryDialogState
   List<Employee> get _filteredEmployees {
     final query = _searchController.text.trim().toLowerCase();
     final employees = [...widget.employees]
-      ..sort(
-        (a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-      );
+      ..sort((a, b) {
+        final left = employeeDisplayName(a).toLowerCase();
+        final right = employeeDisplayName(b).toLowerCase();
+        return left.compareTo(right);
+      });
     if (query.isEmpty) {
       return employees;
     }
 
     return employees.where((employee) {
-      final name = employee.fullName.toLowerCase();
+      final name = employeeDisplayName(employee).toLowerCase();
       final document = employee.documentNumber.toLowerCase();
       return name.contains(query) || document.contains(query);
     }).toList();
@@ -3459,7 +3712,7 @@ class _EmployeeMonthlySummaryDialogState
                           (employee) => DropdownMenuItem<int>(
                             value: employee.id,
                             child: Text(
-                              '${employee.fullName} (${employee.documentNumber})',
+                              '${employeeDisplayName(employee)} (${employee.documentNumber})',
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -3484,7 +3737,7 @@ class _EmployeeMonthlySummaryDialogState
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Periodo: ${widget.month.toString().padLeft(2, '0')}/${widget.year} | Empresa: ${widget.companyName} | Empleado: ${selectedEmployee.fullName}',
+                  'Periodo: ${widget.month.toString().padLeft(2, '0')}/${widget.year} | Empresa: ${widget.companyName} | Empleado: ${employeeDisplayName(selectedEmployee)}',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),

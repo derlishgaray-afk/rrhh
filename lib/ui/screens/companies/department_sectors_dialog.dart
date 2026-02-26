@@ -8,11 +8,17 @@ class DepartmentSectorsDialog extends StatefulWidget {
   const DepartmentSectorsDialog({
     required this.service,
     required this.department,
+    required this.canCreateSector,
+    required this.canUpdateSector,
+    required this.canDeleteSector,
     super.key,
   });
 
   final DepartmentService service;
   final Department department;
+  final bool canCreateSector;
+  final bool canUpdateSector;
+  final bool canDeleteSector;
 
   @override
   State<DepartmentSectorsDialog> createState() =>
@@ -99,6 +105,8 @@ class _DepartmentSectorsDialogState extends State<DepartmentSectorsDialog> {
         return;
       }
       await _loadSectors();
+    } on ArgumentError catch (error) {
+      _showError(error.message?.toString() ?? 'No se pudo eliminar el sector.');
     } catch (_) {
       _showError('No se pudo eliminar el sector.');
     }
@@ -131,11 +139,12 @@ class _DepartmentSectorsDialogState extends State<DepartmentSectorsDialog> {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
-                FilledButton.icon(
-                  onPressed: () => _openSectorForm(),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Nuevo sector'),
-                ),
+                if (widget.canCreateSector)
+                  FilledButton.icon(
+                    onPressed: () => _openSectorForm(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Nuevo sector'),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -163,21 +172,23 @@ class _DepartmentSectorsDialogState extends State<DepartmentSectorsDialog> {
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        IconButton(
-                                          tooltip: 'Editar',
-                                          onPressed: () =>
-                                              _openSectorForm(sector: sector),
-                                          icon: const Icon(Icons.edit),
-                                        ),
-                                        IconButton(
-                                          tooltip: 'Eliminar',
-                                          onPressed: () =>
-                                              _deleteSector(sector),
-                                          icon: const Icon(
-                                            Icons.delete,
-                                            color: Colors.red,
+                                        if (widget.canUpdateSector)
+                                          IconButton(
+                                            tooltip: 'Editar',
+                                            onPressed: () =>
+                                                _openSectorForm(sector: sector),
+                                            icon: const Icon(Icons.edit),
                                           ),
-                                        ),
+                                        if (widget.canDeleteSector)
+                                          IconButton(
+                                            tooltip: 'Eliminar',
+                                            onPressed: () =>
+                                                _deleteSector(sector),
+                                            icon: const Icon(
+                                              Icons.delete,
+                                              color: Colors.red,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),

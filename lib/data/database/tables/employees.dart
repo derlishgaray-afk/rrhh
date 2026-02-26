@@ -7,6 +7,12 @@ class Employees extends Table {
       .named('company_id')
       .references(Companies, #id, onDelete: KeyAction.cascade)();
 
+  TextColumn get firstNames =>
+      text().named('first_names').withDefault(const Constant(''))();
+
+  TextColumn get lastNames =>
+      text().named('last_names').withDefault(const Constant(''))();
+
   TextColumn get fullName => text().named('full_name')();
 
   TextColumn get documentNumber => text().named('document_number')();

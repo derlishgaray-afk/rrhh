@@ -32,6 +32,12 @@ class PayrollDao extends DatabaseAccessor<AppDatabase> with _$PayrollDaoMixin {
         .getSingleOrNull();
   }
 
+  Future<PayrollRun?> getPayrollRunById(int payrollRunId) {
+    return (select(
+      payrollRuns,
+    )..where((tbl) => tbl.id.equals(payrollRunId))).getSingleOrNull();
+  }
+
   Future<int> insertPayrollRun(PayrollRunsCompanion run) {
     return into(payrollRuns).insert(run);
   }
@@ -93,6 +99,8 @@ class PayrollDao extends DatabaseAccessor<AppDatabase> with _$PayrollDaoMixin {
           )
           ..orderBy([
             OrderingTerm.asc(departments.name),
+            OrderingTerm.asc(employees.lastNames),
+            OrderingTerm.asc(employees.firstNames),
             OrderingTerm.asc(employees.fullName),
           ]);
 

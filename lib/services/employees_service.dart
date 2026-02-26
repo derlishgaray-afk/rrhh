@@ -1,12 +1,20 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../security/security_constants.dart';
+import 'employee_name_formatter.dart';
+import 'authorization_service.dart';
 
 class EmployeesService {
-  EmployeesService(this._employeesDao, this._departmentsDao);
+  EmployeesService(
+    this._employeesDao,
+    this._departmentsDao,
+    this._authorizationService,
+  );
 
   final EmployeesDao _employeesDao;
   final DepartmentsDao _departmentsDao;
+  final AuthorizationService _authorizationService;
 
   Future<int> createEmployee({
     required int companyId,
@@ -14,7 +22,8 @@ class EmployeesService {
     required int? sectorId,
     required String? jobTitle,
     required String? workLocation,
-    required String fullName,
+    required String firstNames,
+    required String lastNames,
     required String documentNumber,
     required DateTime hireDate,
     required String employeeType,
@@ -35,13 +44,19 @@ class EmployeesService {
     String? workEndTimeSaturday,
     bool active = true,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesCreate,
+      companyId: companyId,
+    );
+
     final input = await _sanitizeAndValidate(
       companyId: companyId,
       departmentId: departmentId,
       sectorId: sectorId,
       jobTitle: jobTitle,
       workLocation: workLocation,
-      fullName: fullName,
+      firstNames: firstNames,
+      lastNames: lastNames,
       documentNumber: documentNumber,
       hireDate: hireDate,
       employeeType: employeeType,
@@ -71,6 +86,8 @@ class EmployeesService {
         sectorId: Value(input.sectorId),
         jobTitle: Value(input.jobTitle),
         workLocation: Value(input.workLocation),
+        firstNames: Value(input.firstNames),
+        lastNames: Value(input.lastNames),
         fullName: input.fullName,
         documentNumber: input.documentNumber,
         hireDate: input.hireDate,
@@ -101,7 +118,8 @@ class EmployeesService {
     required int? sectorId,
     required String? jobTitle,
     required String? workLocation,
-    required String fullName,
+    required String firstNames,
+    required String lastNames,
     required String documentNumber,
     required DateTime hireDate,
     required String employeeType,
@@ -122,13 +140,19 @@ class EmployeesService {
     String? workEndTimeSaturday,
     required bool active,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesUpdate,
+      companyId: currentEmployee.companyId,
+    );
+
     final input = await _sanitizeAndValidate(
       companyId: currentEmployee.companyId,
       departmentId: departmentId,
       sectorId: sectorId,
       jobTitle: jobTitle,
       workLocation: workLocation,
-      fullName: fullName,
+      firstNames: firstNames,
+      lastNames: lastNames,
       documentNumber: documentNumber,
       hireDate: hireDate,
       employeeType: employeeType,
@@ -156,6 +180,8 @@ class EmployeesService {
       sectorId: Value(input.sectorId),
       jobTitle: Value(input.jobTitle),
       workLocation: Value(input.workLocation),
+      firstNames: input.firstNames,
+      lastNames: input.lastNames,
       fullName: input.fullName,
       documentNumber: input.documentNumber,
       hireDate: input.hireDate,
@@ -181,26 +207,77 @@ class EmployeesService {
     return _employeesDao.updateEmployee(updatedEmployee);
   }
 
-  Future<int> deleteEmployee(int employeeId) {
+  Future<int> deleteEmployee(int employeeId) async {
     if (employeeId <= 0) {
       throw ArgumentError('El id del empleado no es valido.');
+    }
+    final employee = await _employeesDao.getEmployeeById(employeeId);
+    if (employee != null) {
+      await _authorizationService.ensurePermission(
+        PermissionKeys.employeesDelete,
+        companyId: employee.companyId,
+      );
+    }
+
+    final hasMovements = await _employeesDao.hasMovements(employeeId);
+    if (hasMovements) {
+      throw ArgumentError(
+        'No se puede eliminar el empleado porque tiene movimientos registrados.',
+      );
     }
     return _employeesDao.deleteEmployee(employeeId);
   }
 
-  Future<List<Employee>> listEmployeesByCompany(int companyId) {
+  Future<List<Employee>> listEmployeesByCompany(int companyId) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesRead,
+      companyId: companyId,
+    );
     return _employeesDao.getEmployeesByCompany(companyId);
   }
 
-  Future<List<Employee>> listEmployeesAllCompanies() {
+  Future<List<Employee>> listEmployeesAllCompanies() async {
+    await _authorizationService.ensureSuperAdmin(
+      message:
+          'Solo SUPER_ADMIN puede consultar empleados de todas las empresas.',
+    );
     return _employeesDao.getEmployees();
   }
 
-  Future<List<Employee>> listActiveEmployeesByCompany(int companyId) {
+  Future<List<Employee>> listEmployeesAccessibleCompanies() async {
+    final companies = await _authorizationService.listAccessibleCompanies();
+    if (companies.isEmpty) {
+      return const [];
+    }
+
+    final employees = <Employee>[];
+    for (final company in companies) {
+      await _authorizationService.ensurePermission(
+        PermissionKeys.employeesRead,
+        companyId: company.id,
+      );
+      final byCompany = await _employeesDao.getEmployeesByCompany(company.id);
+      employees.addAll(byCompany);
+    }
+    return employees;
+  }
+
+  Future<List<Employee>> listActiveEmployeesByCompany(int companyId) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesRead,
+      companyId: companyId,
+    );
     return _employeesDao.getActiveEmployeesByCompany(companyId);
   }
 
-  Future<List<Employee>> searchEmployeesByName(int companyId, String query) {
+  Future<List<Employee>> searchEmployeesByName(
+    int companyId,
+    String query,
+  ) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesRead,
+      companyId: companyId,
+    );
     return _employeesDao.searchEmployeesByName(companyId, query);
   }
 
@@ -209,6 +286,11 @@ class EmployeesService {
     required String documentNumber,
     int? excludeEmployeeId,
   }) async {
+    await _authorizationService.ensurePermission(
+      PermissionKeys.employeesRead,
+      companyId: companyId,
+    );
+
     if (companyId <= 0) {
       throw ArgumentError('La empresa seleccionada no es valida.');
     }
@@ -245,7 +327,8 @@ class EmployeesService {
     required int? sectorId,
     required String? jobTitle,
     required String? workLocation,
-    required String fullName,
+    required String firstNames,
+    required String lastNames,
     required String documentNumber,
     required DateTime hireDate,
     required String employeeType,
@@ -291,7 +374,12 @@ class EmployeesService {
       );
     }
 
-    final normalizedName = fullName.trim();
+    final normalizedFirstNames = _normalizeNamePart(firstNames);
+    final normalizedLastNames = _normalizeNamePart(lastNames);
+    final normalizedName = composeEmployeeFullName(
+      firstNames: normalizedFirstNames,
+      lastNames: normalizedLastNames,
+    );
     final normalizedDocument = documentNumber.trim();
     final normalizedType = employeeType.trim().toLowerCase();
     final normalizedJobTitle = _normalizeOptional(jobTitle);
@@ -315,8 +403,12 @@ class EmployeesService {
       workEndTimeSaturday,
     );
 
-    if (normalizedName.isEmpty) {
-      throw ArgumentError('El nombre es obligatorio.');
+    if (normalizedFirstNames.isEmpty) {
+      throw ArgumentError('El/los nombre(s) es obligatorio.');
+    }
+
+    if (normalizedLastNames.isEmpty) {
+      throw ArgumentError('El/los apellido(s) es obligatorio.');
     }
 
     if (normalizedDocument.isEmpty) {
@@ -330,7 +422,7 @@ class EmployeesService {
     );
     if (duplicateEmployee != null) {
       throw ArgumentError(
-        'El documento ya esta registrado en esta empresa (${duplicateEmployee.fullName}).',
+        'El documento ya esta registrado en esta empresa (${employeeDisplayName(duplicateEmployee)}).',
       );
     }
 
@@ -375,6 +467,8 @@ class EmployeesService {
       sectorId: sectorId,
       jobTitle: normalizedJobTitle,
       workLocation: normalizedWorkLocation,
+      firstNames: normalizedFirstNames,
+      lastNames: normalizedLastNames,
       fullName: normalizedName,
       documentNumber: normalizedDocument,
       hireDate: DateTime(hireDate.year, hireDate.month, hireDate.day),
@@ -506,6 +600,10 @@ class EmployeesService {
     );
     return alphanumeric.isEmpty ? null : alphanumeric;
   }
+
+  String _normalizeNamePart(String value) {
+    return value.trim().replaceAll(RegExp(r'\s+'), ' ');
+  }
 }
 
 const Set<String> _allowedEmployeeTypes = {'mensual', 'jornalero', 'servicio'};
@@ -521,6 +619,8 @@ class _EmployeeInput {
     required this.sectorId,
     required this.jobTitle,
     required this.workLocation,
+    required this.firstNames,
+    required this.lastNames,
     required this.fullName,
     required this.documentNumber,
     required this.hireDate,
@@ -548,6 +648,8 @@ class _EmployeeInput {
   final int sectorId;
   final String jobTitle;
   final String workLocation;
+  final String firstNames;
+  final String lastNames;
   final String fullName;
   final String documentNumber;
   final DateTime hireDate;

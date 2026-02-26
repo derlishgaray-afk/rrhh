@@ -17,6 +17,33 @@ class EmployeesDao extends DatabaseAccessor<AppDatabase>
     return (delete(employees)..where((tbl) => tbl.id.equals(employeeId))).go();
   }
 
+  Future<bool> hasMovements(int employeeId) async {
+    final hasAttendance =
+        await (select(db.attendanceEvents)
+              ..where((tbl) => tbl.employeeId.equals(employeeId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAttendance != null) {
+      return true;
+    }
+
+    final hasAdvances =
+        await (select(db.advances)
+              ..where((tbl) => tbl.employeeId.equals(employeeId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAdvances != null) {
+      return true;
+    }
+
+    final hasPayrollItems =
+        await (select(db.payrollItems)
+              ..where((tbl) => tbl.employeeId.equals(employeeId))
+              ..limit(1))
+            .getSingleOrNull();
+    return hasPayrollItems != null;
+  }
+
   Future<Employee?> getEmployeeById(int employeeId) {
     return (select(
       employees,
@@ -26,14 +53,18 @@ class EmployeesDao extends DatabaseAccessor<AppDatabase>
   Future<List<Employee>> getEmployeesByCompany(int companyId) {
     return (select(employees)
           ..where((tbl) => tbl.companyId.equals(companyId))
-          ..orderBy([(tbl) => OrderingTerm.asc(tbl.fullName)]))
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.lastNames),
+            (tbl) => OrderingTerm.asc(tbl.firstNames),
+          ]))
         .get();
   }
 
   Future<List<Employee>> getEmployees() {
     return (select(employees)..orderBy([
           (tbl) => OrderingTerm.asc(tbl.companyId),
-          (tbl) => OrderingTerm.asc(tbl.fullName),
+          (tbl) => OrderingTerm.asc(tbl.lastNames),
+          (tbl) => OrderingTerm.asc(tbl.firstNames),
         ]))
         .get();
   }
@@ -43,7 +74,10 @@ class EmployeesDao extends DatabaseAccessor<AppDatabase>
           ..where(
             (tbl) => tbl.companyId.equals(companyId) & tbl.active.equals(true),
           )
-          ..orderBy([(tbl) => OrderingTerm.asc(tbl.fullName)]))
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.lastNames),
+            (tbl) => OrderingTerm.asc(tbl.firstNames),
+          ]))
         .get();
   }
 
@@ -57,9 +91,16 @@ class EmployeesDao extends DatabaseAccessor<AppDatabase>
           ..where(
             (tbl) =>
                 tbl.companyId.equals(companyId) &
-                tbl.fullName.like('%$normalizedQuery%'),
+                (tbl.firstNames.like('%$normalizedQuery%') |
+                    tbl.lastNames.like('%$normalizedQuery%') |
+                    tbl.fullName.like('%$normalizedQuery%') |
+                    tbl.documentNumber.like('%$normalizedQuery%') |
+                    tbl.workLocation.like('%$normalizedQuery%')),
           )
-          ..orderBy([(tbl) => OrderingTerm.asc(tbl.fullName)]))
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.lastNames),
+            (tbl) => OrderingTerm.asc(tbl.firstNames),
+          ]))
         .get();
   }
 }

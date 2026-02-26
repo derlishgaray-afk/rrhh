@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
 import '../../../services/advances_service.dart';
+import '../../../services/employee_name_formatter.dart';
 import '../../utils/guarani_currency.dart';
 import '../../utils/thousands_separator_input_formatter.dart';
 
@@ -61,6 +62,7 @@ class _AdvanceFormDialogState extends State<AdvanceFormDialog> {
     final now = DateTime.now();
     final selectedDate = await showDatePicker(
       context: context,
+      locale: const Locale('es', 'PY'),
       initialDate: _date ?? now,
       firstDate: DateTime(1970),
       lastDate: DateTime(now.year + 2, 12, 31),
@@ -167,7 +169,7 @@ class _AdvanceFormDialogState extends State<AdvanceFormDialog> {
                     .map(
                       (employee) => DropdownMenuItem<int>(
                         value: employee.id,
-                        child: Text(employee.fullName),
+                        child: Text(employeeDisplayName(employee)),
                       ),
                     )
                     .toList(),

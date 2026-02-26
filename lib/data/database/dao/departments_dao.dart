@@ -19,6 +19,48 @@ class DepartmentsDao extends DatabaseAccessor<AppDatabase>
     )..where((tbl) => tbl.id.equals(departmentId))).go();
   }
 
+  Future<bool> departmentHasMovements(int departmentId) async {
+    final hasAttendance =
+        await (select(db.attendanceEvents).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.attendanceEvents.employeeId),
+                ),
+              ])
+              ..where(db.employees.departmentId.equals(departmentId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAttendance != null) {
+      return true;
+    }
+
+    final hasAdvances =
+        await (select(db.advances).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.advances.employeeId),
+                ),
+              ])
+              ..where(db.employees.departmentId.equals(departmentId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAdvances != null) {
+      return true;
+    }
+
+    final hasPayrollItems =
+        await (select(db.payrollItems).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.payrollItems.employeeId),
+                ),
+              ])
+              ..where(db.employees.departmentId.equals(departmentId))
+              ..limit(1))
+            .getSingleOrNull();
+    return hasPayrollItems != null;
+  }
+
   Future<Department?> getDepartmentById(int departmentId) {
     return (select(
       departments,
@@ -44,6 +86,48 @@ class DepartmentsDao extends DatabaseAccessor<AppDatabase>
     return (delete(
       departmentSectors,
     )..where((tbl) => tbl.id.equals(sectorId))).go();
+  }
+
+  Future<bool> sectorHasMovements(int sectorId) async {
+    final hasAttendance =
+        await (select(db.attendanceEvents).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.attendanceEvents.employeeId),
+                ),
+              ])
+              ..where(db.employees.sectorId.equals(sectorId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAttendance != null) {
+      return true;
+    }
+
+    final hasAdvances =
+        await (select(db.advances).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.advances.employeeId),
+                ),
+              ])
+              ..where(db.employees.sectorId.equals(sectorId))
+              ..limit(1))
+            .getSingleOrNull();
+    if (hasAdvances != null) {
+      return true;
+    }
+
+    final hasPayrollItems =
+        await (select(db.payrollItems).join([
+                innerJoin(
+                  db.employees,
+                  db.employees.id.equalsExp(db.payrollItems.employeeId),
+                ),
+              ])
+              ..where(db.employees.sectorId.equals(sectorId))
+              ..limit(1))
+            .getSingleOrNull();
+    return hasPayrollItems != null;
   }
 
   Future<DepartmentSector?> getSectorById(int sectorId) {

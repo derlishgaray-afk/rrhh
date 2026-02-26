@@ -9,11 +9,17 @@ class DepartmentsScreen extends StatefulWidget {
   const DepartmentsScreen({
     required this.service,
     required this.companyId,
+    required this.canCreateDepartment,
+    required this.canUpdateDepartment,
+    required this.canDeleteDepartment,
     super.key,
   });
 
   final DepartmentService service;
   final int companyId;
+  final bool canCreateDepartment;
+  final bool canUpdateDepartment;
+  final bool canDeleteDepartment;
 
   @override
   State<DepartmentsScreen> createState() => _DepartmentsScreenState();
@@ -84,6 +90,9 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
       builder: (_) => DepartmentSectorsDialog(
         service: widget.service,
         department: department,
+        canCreateSector: widget.canCreateDepartment,
+        canUpdateSector: widget.canUpdateDepartment,
+        canDeleteSector: widget.canDeleteDepartment,
       ),
     );
   }
@@ -119,6 +128,10 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
         return;
       }
       await _loadDepartments();
+    } on ArgumentError catch (error) {
+      _showError(
+        error.message?.toString() ?? 'No se pudo eliminar el departamento.',
+      );
     } catch (_) {
       _showError('No se pudo eliminar el departamento.');
     }
@@ -145,11 +158,12 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
             ),
-            FilledButton.icon(
-              onPressed: () => _openDepartmentForm(),
-              icon: const Icon(Icons.account_tree),
-              label: const Text('Nuevo departamento'),
-            ),
+            if (widget.canCreateDepartment)
+              FilledButton.icon(
+                onPressed: () => _openDepartmentForm(),
+                icon: const Icon(Icons.account_tree),
+                label: const Text('Nuevo departamento'),
+              ),
           ],
         ),
         const SizedBox(height: 16),
@@ -183,22 +197,24 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
                                       onPressed: () => _openSectors(department),
                                       child: const Text('Sectores'),
                                     ),
-                                    IconButton(
-                                      tooltip: 'Editar',
-                                      onPressed: () => _openDepartmentForm(
-                                        department: department,
+                                    if (widget.canUpdateDepartment)
+                                      IconButton(
+                                        tooltip: 'Editar',
+                                        onPressed: () => _openDepartmentForm(
+                                          department: department,
+                                        ),
+                                        icon: const Icon(Icons.edit),
                                       ),
-                                      icon: const Icon(Icons.edit),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Eliminar',
-                                      onPressed: () =>
-                                          _deleteDepartment(department),
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.red,
+                                    if (widget.canDeleteDepartment)
+                                      IconButton(
+                                        tooltip: 'Eliminar',
+                                        onPressed: () =>
+                                            _deleteDepartment(department),
+                                        icon: const Icon(
+                                          Icons.delete,
+                                          color: Colors.red,
+                                        ),
                                       ),
-                                    ),
                                   ],
                                 ),
                               ),

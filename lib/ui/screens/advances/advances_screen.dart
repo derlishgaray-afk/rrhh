@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
 import '../../../services/advances_service.dart';
+import '../../../services/employee_name_formatter.dart';
 import '../../../services/employees_service.dart';
 import '../../utils/guarani_currency.dart';
 import 'advance_form_dialog.dart';
@@ -137,7 +138,7 @@ class _AdvancesScreenState extends State<AdvancesScreen> {
   String _employeeName(int employeeId) {
     for (final employee in _employees) {
       if (employee.id == employeeId) {
-        return employee.fullName;
+        return employeeDisplayName(employee);
       }
     }
     return 'Desconocido';

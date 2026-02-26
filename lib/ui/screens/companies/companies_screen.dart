@@ -12,6 +12,12 @@ class CompaniesScreen extends StatefulWidget {
     required this.departmentService,
     required this.companyId,
     required this.activeCompanyId,
+    required this.canCreateCompany,
+    required this.canUpdateCompany,
+    required this.canDeleteCompany,
+    required this.canCreateDepartment,
+    required this.canUpdateDepartment,
+    required this.canDeleteDepartment,
     required this.onCompanyDataChanged,
     required this.onSetActiveCompany,
     super.key,
@@ -21,6 +27,12 @@ class CompaniesScreen extends StatefulWidget {
   final DepartmentService departmentService;
   final int companyId;
   final int? activeCompanyId;
+  final bool canCreateCompany;
+  final bool canUpdateCompany;
+  final bool canDeleteCompany;
+  final bool canCreateDepartment;
+  final bool canUpdateDepartment;
+  final bool canDeleteDepartment;
   final Future<void> Function() onCompanyDataChanged;
   final Future<void> Function(int companyId) onSetActiveCompany;
 
@@ -107,6 +119,10 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
 
       await _loadCompanies();
       await widget.onCompanyDataChanged();
+    } on ArgumentError catch (error) {
+      _showError(
+        error.message?.toString() ?? 'No se pudo eliminar la empresa.',
+      );
     } catch (_) {
       _showError('No se pudo eliminar la empresa.');
     }
@@ -144,6 +160,9 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
                   DepartmentsScreen(
                     service: widget.departmentService,
                     companyId: widget.companyId,
+                    canCreateDepartment: widget.canCreateDepartment,
+                    canUpdateDepartment: widget.canUpdateDepartment,
+                    canDeleteDepartment: widget.canDeleteDepartment,
                   ),
                 ],
               ),
@@ -165,11 +184,12 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
             ),
-            FilledButton.icon(
-              onPressed: () => _openCompanyForm(),
-              icon: const Icon(Icons.add_business),
-              label: const Text('Nueva empresa'),
-            ),
+            if (widget.canCreateCompany)
+              FilledButton.icon(
+                onPressed: () => _openCompanyForm(),
+                icon: const Icon(Icons.add_business),
+                label: const Text('Nueva empresa'),
+              ),
           ],
         ),
         const SizedBox(height: 16),
@@ -183,7 +203,9 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
                     columns: const [
                       DataColumn(label: Text('Activa')),
                       DataColumn(label: Text('Nombre')),
+                      DataColumn(label: Text('Abrev.')),
                       DataColumn(label: Text('RUC')),
+                      DataColumn(label: Text('N° Patronal MJT')),
                       DataColumn(label: Text('Telefono')),
                       DataColumn(label: Text('Estado')),
                       DataColumn(label: Text('Acciones')),
@@ -203,7 +225,9 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
                                 ),
                               ),
                               DataCell(Text(company.name)),
+                              DataCell(Text(company.abbreviation ?? '-')),
                               DataCell(Text(company.ruc ?? '-')),
+                              DataCell(Text(company.mjtEmployerNumber ?? '-')),
                               DataCell(Text(company.phone ?? '-')),
                               DataCell(
                                 Text(company.active ? 'Activa' : 'Inactiva'),
@@ -217,20 +241,23 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
                                           widget.onSetActiveCompany(company.id),
                                       child: const Text('Seleccionar'),
                                     ),
-                                    IconButton(
-                                      tooltip: 'Editar',
-                                      onPressed: () =>
-                                          _openCompanyForm(company: company),
-                                      icon: const Icon(Icons.edit),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Eliminar',
-                                      onPressed: () => _deleteCompany(company),
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.red,
+                                    if (widget.canUpdateCompany)
+                                      IconButton(
+                                        tooltip: 'Editar',
+                                        onPressed: () =>
+                                            _openCompanyForm(company: company),
+                                        icon: const Icon(Icons.edit),
                                       ),
-                                    ),
+                                    if (widget.canDeleteCompany)
+                                      IconButton(
+                                        tooltip: 'Eliminar',
+                                        onPressed: () =>
+                                            _deleteCompany(company),
+                                        icon: const Icon(
+                                          Icons.delete,
+                                          color: Colors.red,
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),

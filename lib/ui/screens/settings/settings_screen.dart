@@ -10,11 +10,13 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     required this.service,
     required this.companyId,
+    required this.canUpdateSettings,
     super.key,
   });
 
   final CompanySettingsService service;
   final int companyId;
+  final bool canUpdateSettings;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -138,6 +140,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _save() async {
+    if (!widget.canUpdateSettings) {
+      _showError('No tiene permiso para actualizar configuracion.');
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -287,6 +294,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openHolidaysCalendar() async {
+    if (!widget.canUpdateSettings) {
+      _showError('No tiene permiso para actualizar configuracion.');
+      return;
+    }
+
     if (_isSaving || _isSavingHolidays) {
       return;
     }
@@ -364,6 +376,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (!widget.canUpdateSettings)
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          border: Border.all(color: Colors.amber.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'Modo solo lectura: este usuario no puede editar la configuracion.',
+                        ),
+                      ),
                     const Text(
                       'Configuracion de nomina por empresa',
                       style: TextStyle(
@@ -633,7 +659,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         OutlinedButton.icon(
-                          onPressed: _isSaving || _isSavingHolidays
+                          onPressed:
+                              !widget.canUpdateSettings ||
+                                  _isSaving ||
+                                  _isSavingHolidays
                               ? null
                               : _openHolidaysCalendar,
                           icon: const Icon(Icons.calendar_month),
@@ -669,7 +698,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(
-                        onPressed: _isSaving ? null : _save,
+                        onPressed: !widget.canUpdateSettings || _isSaving
+                            ? null
+                            : _save,
                         icon: const Icon(Icons.save),
                         label: Text(_isSaving ? 'Guardando...' : 'Guardar'),
                       ),

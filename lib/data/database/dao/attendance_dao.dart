@@ -19,6 +19,12 @@ class AttendanceDao extends DatabaseAccessor<AppDatabase>
     )..where((tbl) => tbl.id.equals(eventId))).go();
   }
 
+  Future<AttendanceEvent?> getAttendanceEventById(int eventId) {
+    return (select(
+      attendanceEvents,
+    )..where((tbl) => tbl.id.equals(eventId))).getSingleOrNull();
+  }
+
   Future<List<AttendanceEvent>> getAttendanceByMonth({
     required int companyId,
     required int year,
@@ -33,6 +39,36 @@ class AttendanceDao extends DatabaseAccessor<AppDatabase>
                 tbl.companyId.equals(companyId) &
                 tbl.date.isBiggerOrEqualValue(start) &
                 tbl.date.isSmallerThanValue(end),
+          )
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.date),
+            (tbl) => OrderingTerm.asc(tbl.id),
+          ]))
+        .get();
+  }
+
+  Future<List<AttendanceEvent>> getAttendanceByDateRange({
+    required int companyId,
+    required DateTime startDate,
+    required DateTime endDate,
+  }) {
+    final normalizedStart = DateTime(
+      startDate.year,
+      startDate.month,
+      startDate.day,
+    );
+    final normalizedEnd = DateTime(
+      endDate.year,
+      endDate.month,
+      endDate.day,
+    ).add(const Duration(days: 1));
+
+    return (select(attendanceEvents)
+          ..where(
+            (tbl) =>
+                tbl.companyId.equals(companyId) &
+                tbl.date.isBiggerOrEqualValue(normalizedStart) &
+                tbl.date.isSmallerThanValue(normalizedEnd),
           )
           ..orderBy([
             (tbl) => OrderingTerm.asc(tbl.date),

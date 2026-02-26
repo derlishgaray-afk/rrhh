@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../security/security_constants.dart';
+import 'authorization_service.dart';
 
 class CompanySettingsService {
-  CompanySettingsService(this._companySettingsDao);
+  CompanySettingsService(this._companySettingsDao, this._authorizationService);
 
   final CompanySettingsDao _companySettingsDao;
+  final AuthorizationService _authorizationService;
 
   Future<CompanySetting> getOrCreateSettings(int companyId) async {
     _validateCompanyId(companyId);
@@ -77,6 +80,10 @@ class CompanySettingsService {
     required int lateArrivalAllowedTimesPerMonth,
   }) async {
     _validateCompanyId(companyId);
+    await _authorizationService.ensurePermission(
+      PermissionKeys.settingsUpdate,
+      companyId: companyId,
+    );
     _validateNonNegative('IPS empleado', ipsEmployeeRate);
     _validateNonNegative('IPS empleador', ipsEmployerRate);
     _validateNonNegative('Salario minimo', minimumWage);
@@ -261,6 +268,10 @@ class CompanySettingsService {
     required Iterable<DateTime> holidayDates,
   }) async {
     _validateCompanyId(companyId);
+    await _authorizationService.ensurePermission(
+      PermissionKeys.settingsUpdate,
+      companyId: companyId,
+    );
     final now = DateTime.now();
     final serializedDates = serializeHolidayDates(holidayDates);
     await getOrCreateSettings(companyId);

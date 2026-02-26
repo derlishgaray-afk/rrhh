@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../data/database/app_database.dart';
 import '../../../services/department_service.dart';
+import '../../../services/employee_name_formatter.dart';
 import '../../../services/employees_service.dart';
 import '../../utils/guarani_currency.dart';
 import '../../utils/thousands_separator_input_formatter.dart';
@@ -30,7 +31,8 @@ class EmployeeFormDialog extends StatefulWidget {
 class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _formKey = GlobalKey<FormState>();
   final _documentFocusNode = FocusNode();
-  final _fullNameController = TextEditingController();
+  final _firstNamesController = TextEditingController();
+  final _lastNamesController = TextEditingController();
   final _documentNumberController = TextEditingController();
   final _jobTitleController = TextEditingController();
   final _workLocationController = TextEditingController();
@@ -76,7 +78,16 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
     final employee = widget.employee;
     if (employee != null) {
-      _fullNameController.text = employee.fullName;
+      final normalizedFirstNames = employee.firstNames.trim();
+      final normalizedLastNames = employee.lastNames.trim();
+      if (normalizedFirstNames.isNotEmpty || normalizedLastNames.isNotEmpty) {
+        _firstNamesController.text = normalizedFirstNames;
+        _lastNamesController.text = normalizedLastNames;
+      } else {
+        final split = _splitLegacyFullName(employee.fullName);
+        _firstNamesController.text = split.$1;
+        _lastNamesController.text = split.$2;
+      }
       _documentNumberController.text = employee.documentNumber;
       _jobTitleController.text = employee.jobTitle ?? '';
       _workLocationController.text = employee.workLocation ?? '';
@@ -115,7 +126,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     _documentFocusNode
       ..removeListener(_onDocumentFocusChange)
       ..dispose();
-    _fullNameController.dispose();
+    _firstNamesController.dispose();
+    _lastNamesController.dispose();
     _documentNumberController.dispose();
     _jobTitleController.dispose();
     _workLocationController.dispose();
@@ -166,7 +178,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
 
       final duplicateMessage = duplicate == null
           ? null
-          : 'Documento ya registrado en esta empresa (${duplicate.fullName}).';
+          : 'Documento ya registrado en esta empresa (${employeeDisplayName(duplicate)}).';
       if (_documentDuplicateError != duplicateMessage) {
         setState(() {
           _documentDuplicateError = duplicateMessage;
@@ -311,7 +323,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
           sectorId: _selectedSectorId,
           jobTitle: _jobTitleController.text,
           workLocation: _workLocationController.text,
-          fullName: _fullNameController.text,
+          firstNames: _firstNamesController.text,
+          lastNames: _lastNamesController.text,
           documentNumber: _documentNumberController.text,
           hireDate: _hireDate!,
           employeeType: _employeeType,
@@ -339,7 +352,8 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
           sectorId: _selectedSectorId,
           jobTitle: _jobTitleController.text,
           workLocation: _workLocationController.text,
-          fullName: _fullNameController.text,
+          firstNames: _firstNamesController.text,
+          lastNames: _lastNamesController.text,
           documentNumber: _documentNumberController.text,
           hireDate: _hireDate!,
           employeeType: _employeeType,
@@ -386,6 +400,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     final now = DateTime.now();
     final selectedDate = await showDatePicker(
       context: context,
+      locale: const Locale('es', 'PY'),
       initialDate: _hireDate ?? now,
       firstDate: DateTime(1970),
       lastDate: DateTime(now.year + 2, 12, 31),
@@ -470,6 +485,27 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
     return (int.parse(match.group(1)!), int.parse(match.group(2)!));
   }
 
+  (String, String) _splitLegacyFullName(String fullName) {
+    final normalized = fullName.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) {
+      return ('', '');
+    }
+    final parts = normalized.split(' ');
+    if (parts.length == 1) {
+      return (parts.first, '');
+    }
+    if (parts.length == 2) {
+      return (parts.first, parts.last);
+    }
+    if (parts.length == 3) {
+      return ('${parts[0]} ${parts[1]}', parts[2]);
+    }
+    return (
+      parts.sublist(0, parts.length - 2).join(' '),
+      parts.sublist(parts.length - 2).join(' '),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final effectiveCompanyName = widget.companyName.trim().isEmpty
@@ -505,18 +541,40 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
                     padding: EdgeInsets.only(bottom: 12),
                     child: LinearProgressIndicator(),
                   ),
-                TextFormField(
-                  controller: _fullNameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nombre completo',
-                  ),
-                  textInputAction: TextInputAction.next,
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Ingrese el nombre.';
-                    }
-                    return null;
-                  },
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _firstNamesController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre(s)',
+                        ),
+                        textInputAction: TextInputAction.next,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingrese nombre(s).';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _lastNamesController,
+                        decoration: const InputDecoration(
+                          labelText: 'Apellido(s)',
+                        ),
+                        textInputAction: TextInputAction.next,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingrese apellido(s).';
+                          }
+                          return null;
+                        },
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextFormField(

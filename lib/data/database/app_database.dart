@@ -5,6 +5,9 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../security/password_hasher.dart';
+import '../../security/security_constants.dart';
+
 part 'dao/advances_dao.dart';
 part 'dao/attendance_dao.dart';
 part 'dao/company_settings_dao.dart';
@@ -12,6 +15,7 @@ part 'dao/companies_dao.dart';
 part 'dao/departments_dao.dart';
 part 'dao/employees_dao.dart';
 part 'dao/payroll_dao.dart';
+part 'dao/security_dao.dart';
 part 'dao/settings_dao.dart';
 part 'tables/advances.dart';
 part 'tables/app_settings.dart';
@@ -21,8 +25,13 @@ part 'tables/companies.dart';
 part 'tables/departments.dart';
 part 'tables/department_sectors.dart';
 part 'tables/employees.dart';
+part 'tables/permissions.dart';
 part 'tables/payroll_items.dart';
 part 'tables/payroll_runs.dart';
+part 'tables/role_permissions.dart';
+part 'tables/roles.dart';
+part 'tables/user_company_access.dart';
+part 'tables/users.dart';
 part 'app_database.g.dart';
 
 const String _activeCompanySettingKey = 'active_company_id';
@@ -39,6 +48,11 @@ const String _activeCompanySettingKey = 'active_company_id';
     Advances,
     PayrollRuns,
     PayrollItems,
+    Users,
+    Roles,
+    Permissions,
+    RolePermissions,
+    UserCompanyAccess,
   ],
   daos: [
     CompaniesDao,
@@ -49,18 +63,20 @@ const String _activeCompanySettingKey = 'active_company_id';
     CompanySettingsDao,
     AdvancesDao,
     PayrollDao,
+    SecurityDao,
   ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
+      await _seedSecurityModel();
     },
     onUpgrade: (m, from, to) async {
       if (from < 2) {
@@ -300,11 +316,292 @@ class AppDatabase extends _$AppDatabase {
       if (from >= 2 && from < 19) {
         await _addColumnIfMissing(m, employees, employees.workEndTimeSaturday);
       }
+
+      if (from < 20) {
+        await _createTableIfMissing(m, users);
+        await _createTableIfMissing(m, roles);
+        await _createTableIfMissing(m, permissions);
+        await _createTableIfMissing(m, rolePermissions);
+        await _createTableIfMissing(m, userCompanyAccess);
+      }
+
+      if (from < 21) {
+        await _addColumnIfMissing(m, payrollRuns, payrollRuns.isLocked);
+        await _addColumnIfMissing(m, payrollRuns, payrollRuns.lockedAt);
+        await _addColumnIfMissing(m, payrollRuns, payrollRuns.lockedByUserId);
+      }
+
+      if (from < 22) {
+        await _addColumnIfMissing(m, companies, companies.mjtEmployerNumber);
+        await _addColumnIfMissing(m, companies, companies.logoPng);
+      }
+
+      if (from < 23) {
+        await _addColumnIfMissing(m, employees, employees.firstNames);
+        await _addColumnIfMissing(m, employees, employees.lastNames);
+
+        final legacyEmployees = await select(employees).get();
+        for (final employee in legacyEmployees) {
+          final split = _splitLegacyEmployeeName(employee.fullName);
+          final normalizedFullName = _composeEmployeeFullName(
+            firstNames: split.$1,
+            lastNames: split.$2,
+          );
+          await update(employees).replace(
+            employee.copyWith(
+              firstNames: split.$1,
+              lastNames: split.$2,
+              fullName: normalizedFullName,
+            ),
+          );
+        }
+      }
+
+      if (from < 24) {
+        await _addColumnIfMissing(m, companies, companies.abbreviation);
+      }
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
+      await _seedSecurityModel();
     },
   );
+
+  Future<void> _seedSecurityModel() async {
+    await transaction(() async {
+      final permissionDescriptions = <String, String>{
+        PermissionKeys.usersRead: 'Ver usuarios.',
+        PermissionKeys.usersCreate: 'Crear usuarios.',
+        PermissionKeys.usersUpdate: 'Actualizar usuarios.',
+        PermissionKeys.usersDisable: 'Desactivar usuarios.',
+        PermissionKeys.usersResetPassword: 'Resetear contrasenas de usuarios.',
+        PermissionKeys.rolesManage: 'Administrar roles y permisos.',
+        PermissionKeys.companiesRead: 'Consultar empresas.',
+        PermissionKeys.companiesCreate: 'Crear empresas.',
+        PermissionKeys.companiesUpdate: 'Actualizar empresas.',
+        PermissionKeys.companiesDelete: 'Eliminar empresas.',
+        PermissionKeys.employeesRead: 'Consultar empleados.',
+        PermissionKeys.employeesCreate: 'Crear empleados.',
+        PermissionKeys.employeesUpdate: 'Actualizar empleados.',
+        PermissionKeys.employeesDisable: 'Desactivar empleados.',
+        PermissionKeys.employeesDelete: 'Eliminar empleados.',
+        PermissionKeys.attendanceRead: 'Consultar asistencia.',
+        PermissionKeys.attendanceEdit: 'Editar asistencia.',
+        PermissionKeys.attendanceDelete: 'Eliminar eventos de asistencia.',
+        PermissionKeys.attendanceImportClock: 'Importar marcaciones.',
+        PermissionKeys.payrollRead: 'Consultar liquidacion.',
+        PermissionKeys.payrollGenerate: 'Generar liquidacion.',
+        PermissionKeys.payrollLock: 'Guardar y bloquear liquidacion.',
+        PermissionKeys.payrollUnlock:
+            'Desbloquear liquidacion con contrasena autorizada.',
+        PermissionKeys.payrollPrint: 'Imprimir liquidacion y boletas.',
+        PermissionKeys.payrollExport: 'Exportar liquidacion.',
+        PermissionKeys.reportsRead: 'Consultar informes.',
+        PermissionKeys.settingsRead: 'Consultar configuracion.',
+        PermissionKeys.settingsUpdate: 'Actualizar configuracion.',
+      };
+
+      final permissionByKey = <String, Permission>{};
+      for (final permissionKey in PermissionKeys.all) {
+        final existing = await (select(
+          permissions,
+        )..where((tbl) => tbl.key.equals(permissionKey))).getSingleOrNull();
+        final description = permissionDescriptions[permissionKey];
+        if (existing == null) {
+          final insertedId = await into(permissions).insert(
+            PermissionsCompanion.insert(
+              key: permissionKey,
+              description: Value(description),
+            ),
+          );
+          final inserted = await (select(
+            permissions,
+          )..where((tbl) => tbl.id.equals(insertedId))).getSingle();
+          permissionByKey[permissionKey] = inserted;
+        } else {
+          if ((existing.description ?? '') != (description ?? '')) {
+            await update(
+              permissions,
+            ).replace(existing.copyWith(description: Value(description)));
+          }
+          permissionByKey[permissionKey] = existing;
+        }
+      }
+
+      final roleByName = <String, Role>{};
+      for (final roleName in RoleNames.baseRoles) {
+        final existing = await (select(
+          roles,
+        )..where((tbl) => tbl.name.equals(roleName))).getSingleOrNull();
+        final description = defaultRoleDescriptions[roleName];
+        if (existing == null) {
+          final insertedId = await into(roles).insert(
+            RolesCompanion.insert(
+              name: roleName,
+              description: Value(description),
+            ),
+          );
+          final inserted = await (select(
+            roles,
+          )..where((tbl) => tbl.id.equals(insertedId))).getSingle();
+          roleByName[roleName] = inserted;
+        } else {
+          if ((existing.description ?? '') != (description ?? '')) {
+            await update(
+              roles,
+            ).replace(existing.copyWith(description: Value(description)));
+          }
+          roleByName[roleName] = existing;
+        }
+      }
+
+      await _enforceRolePermissionMatrix(
+        roleByName: roleByName,
+        permissionByKey: permissionByKey,
+      );
+
+      final superAdminRole = roleByName[RoleNames.superAdmin];
+      if (superAdminRole == null) {
+        return;
+      }
+
+      final defaultSuperAdminUserId = await _ensureDefaultSuperAdminUser();
+      await _ensureSuperAdminAccessToAllCompanies(
+        superAdminRoleId: superAdminRole.id,
+        ensureUserIds: {defaultSuperAdminUserId},
+      );
+    });
+  }
+
+  Future<void> _enforceRolePermissionMatrix({
+    required Map<String, Role> roleByName,
+    required Map<String, Permission> permissionByKey,
+  }) async {
+    final allPermissionsById = permissionByKey.values
+        .map((permission) => permission.id)
+        .toSet();
+    final restrictedPermissionIds = PermissionKeys.superAdminOnly
+        .map((permissionKey) => permissionByKey[permissionKey]?.id)
+        .whereType<int>()
+        .toSet();
+
+    final existingRoles = await select(roles).get();
+    for (final role in existingRoles) {
+      final rolePermissionsRows = await (select(
+        rolePermissions,
+      )..where((tbl) => tbl.roleId.equals(role.id))).get();
+      final currentPermissionIds = rolePermissionsRows
+          .map((row) => row.permissionId)
+          .toSet();
+
+      Set<int> targetPermissionIds;
+      if (role.name == RoleNames.superAdmin) {
+        targetPermissionIds = allPermissionsById;
+      } else {
+        final matrixPermissions = baseRolePermissionMatrix[role.name];
+        if (matrixPermissions != null) {
+          targetPermissionIds = matrixPermissions
+              .map((permissionKey) => permissionByKey[permissionKey]?.id)
+              .whereType<int>()
+              .toSet();
+        } else {
+          targetPermissionIds = currentPermissionIds.difference(
+            restrictedPermissionIds,
+          );
+        }
+      }
+
+      final toDelete = currentPermissionIds.difference(targetPermissionIds);
+      final toInsert = targetPermissionIds.difference(currentPermissionIds);
+
+      for (final permissionId in toDelete) {
+        await (delete(rolePermissions)..where(
+              (tbl) =>
+                  tbl.roleId.equals(role.id) &
+                  tbl.permissionId.equals(permissionId),
+            ))
+            .go();
+      }
+
+      for (final permissionId in toInsert) {
+        await into(rolePermissions).insert(
+          RolePermissionsCompanion.insert(
+            roleId: role.id,
+            permissionId: permissionId,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<int> _ensureDefaultSuperAdminUser() async {
+    final normalizedUsername = SecurityBootstrap.defaultSuperAdminUsername;
+    final existing =
+        await (select(users)
+              ..where((tbl) => tbl.username.equals(normalizedUsername)))
+            .getSingleOrNull();
+
+    if (existing != null) {
+      if (!existing.active) {
+        await update(users).replace(existing.copyWith(active: true));
+      }
+      return existing.id;
+    }
+
+    final passwordHash = PasswordHasher.hash(
+      username: normalizedUsername,
+      password: SecurityBootstrap.defaultSuperAdminPassword,
+    );
+    return into(users).insert(
+      UsersCompanion.insert(
+        username: normalizedUsername,
+        passwordHash: passwordHash,
+        fullName: 'Super Admin',
+        active: const Value(true),
+      ),
+    );
+  }
+
+  Future<void> _ensureSuperAdminAccessToAllCompanies({
+    required int superAdminRoleId,
+    required Set<int> ensureUserIds,
+  }) async {
+    final allCompanies = await select(companies).get();
+    if (allCompanies.isEmpty) {
+      return;
+    }
+
+    final existingSuperAdminAccess =
+        await (select(userCompanyAccess)..where(
+              (tbl) =>
+                  tbl.roleId.equals(superAdminRoleId) & tbl.active.equals(true),
+            ))
+            .get();
+    final superAdminUsers = {
+      ...existingSuperAdminAccess.map((entry) => entry.userId),
+      ...ensureUserIds,
+    };
+
+    for (final userId in superAdminUsers) {
+      for (final company in allCompanies) {
+        await into(userCompanyAccess).insert(
+          UserCompanyAccessCompanion.insert(
+            userId: userId,
+            companyId: company.id,
+            roleId: superAdminRoleId,
+            active: const Value(true),
+          ),
+          onConflict: DoUpdate(
+            (_) => UserCompanyAccessCompanion(
+              roleId: Value(superAdminRoleId),
+              active: const Value(true),
+            ),
+            target: [userCompanyAccess.userId, userCompanyAccess.companyId],
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _addColumnIfMissing(
     Migrator m,
@@ -319,6 +616,58 @@ class AppDatabase extends _$AppDatabase {
     if (!existingColumns.contains(column.$name)) {
       await m.addColumn(table, column);
     }
+  }
+
+  Future<void> _createTableIfMissing(
+    Migrator m,
+    TableInfo<Table, dynamic> table,
+  ) async {
+    final rows = await customSelect(
+      'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
+      variables: [
+        Variable.withString('table'),
+        Variable.withString(table.actualTableName),
+      ],
+    ).get();
+
+    if (rows.isEmpty) {
+      await m.createTable(table);
+    }
+  }
+
+  (String, String) _splitLegacyEmployeeName(String fullName) {
+    final normalized = fullName.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) {
+      return ('', '');
+    }
+    final parts = normalized.split(' ');
+    if (parts.length == 1) {
+      return (parts.first, '');
+    }
+    if (parts.length == 2) {
+      return (parts.first, parts.last);
+    }
+    if (parts.length == 3) {
+      return ('${parts[0]} ${parts[1]}', parts[2]);
+    }
+    final firstNames = parts.sublist(0, parts.length - 2).join(' ');
+    final lastNames = parts.sublist(parts.length - 2).join(' ');
+    return (firstNames, lastNames);
+  }
+
+  String _composeEmployeeFullName({
+    required String firstNames,
+    required String lastNames,
+  }) {
+    final normalizedFirstNames = firstNames.trim();
+    final normalizedLastNames = lastNames.trim();
+    if (normalizedFirstNames.isEmpty) {
+      return normalizedLastNames;
+    }
+    if (normalizedLastNames.isEmpty) {
+      return normalizedFirstNames;
+    }
+    return '$normalizedFirstNames $normalizedLastNames';
   }
 }
 
