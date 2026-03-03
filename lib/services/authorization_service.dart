@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../data/database/app_database.dart';
 import '../security/security_constants.dart';
 import 'company_service.dart';
@@ -12,11 +14,10 @@ class AuthorizationService {
   final SettingsDao _settingsDao;
   final SecurityDao _securityDao;
   final CompaniesDao _companiesDao;
+  String? _sessionSettingKeyCache;
 
   Future<int?> getCurrentUserId() async {
-    final setting = await _settingsDao.getSetting(
-      SecuritySettingKeys.currentUserId,
-    );
+    final setting = await _settingsDao.getSetting(_sessionSettingKey);
     final raw = setting?.value?.trim();
     if (raw == null || raw.isEmpty) {
       return null;
@@ -38,14 +39,11 @@ class AuthorizationService {
   }
 
   Future<void> setCurrentUser(int userId) {
-    return _settingsDao.upsertSetting(
-      SecuritySettingKeys.currentUserId,
-      '$userId',
-    );
+    return _settingsDao.upsertSetting(_sessionSettingKey, '$userId');
   }
 
   Future<void> clearCurrentUser() {
-    return _settingsDao.deleteSetting(SecuritySettingKeys.currentUserId);
+    return _settingsDao.deleteSetting(_sessionSettingKey);
   }
 
   Future<bool> isSuperAdmin() async {
@@ -174,5 +172,27 @@ class AuthorizationService {
       return null;
     }
     return int.tryParse(raw);
+  }
+
+  String get _sessionSettingKey {
+    if (_sessionSettingKeyCache != null) {
+      return _sessionSettingKeyCache!;
+    }
+
+    final rawMachineId =
+        Platform.environment['COMPUTERNAME']?.trim().isNotEmpty == true
+        ? Platform.environment['COMPUTERNAME']!.trim()
+        : Platform.localHostname.trim();
+    final normalizedMachineId = rawMachineId.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9_-]+'),
+      '_',
+    );
+    final machineId = normalizedMachineId.isEmpty
+        ? 'unknown_machine'
+        : normalizedMachineId;
+
+    _sessionSettingKeyCache =
+        '${SecuritySettingKeys.currentUserIdByDevicePrefix}$machineId';
+    return _sessionSettingKeyCache!;
   }
 }

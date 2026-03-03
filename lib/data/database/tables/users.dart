@@ -13,8 +13,9 @@ class Users extends Table {
       boolean().named('active').withDefault(const Constant(true))();
 
   DateTimeColumn get createdAt =>
-      dateTime().named('created_at').withDefault(currentDateAndTime)();
+      dateTime().named('created_at').clientDefault(() => DateTime.now())();
 
   DateTimeColumn get lastLoginAt =>
       dateTime().named('last_login_at').nullable()();
 }
+

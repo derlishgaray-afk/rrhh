@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:excel/excel.dart' as xl;
@@ -39,6 +40,7 @@ class AttendanceScreen extends StatefulWidget {
 }
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 8);
   static const List<String> _weekDayNames = [
     'lunes',
     'martes',
@@ -65,6 +67,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   ];
 
   final TextEditingController _searchController = TextEditingController();
+  Timer? _autoRefreshTimer;
 
   List<Employee> _activeEmployees = const [];
   List<AttendanceEvent> _events = const [];
@@ -79,6 +82,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _isApplyingSpecialAbsence = false;
   bool _isAutoCompletingWithoutClock = false;
   bool _isSelectedPeriodLocked = false;
+  bool _isFetchingData = false;
   late int _selectedYear;
   late int _selectedMonth;
   late int _selectedDay;
@@ -107,6 +111,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       setState(() {});
     });
     _loadData();
+    _startAutoRefresh();
   }
 
   @override
@@ -119,9 +124,25 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _searchController.dispose();
     _disposeRows();
     super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted ||
+          _isFetchingData ||
+          _isLoading ||
+          _isImporting ||
+          _isApplyingSpecialAbsence ||
+          _isAutoCompletingWithoutClock) {
+        return;
+      }
+      _loadData(showLoader: false, silentErrors: true);
+    });
   }
 
   void _disposeRows() {
@@ -178,10 +199,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return rows;
   }
 
-  Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-    });
+  Future<void> _loadData({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingData) {
+      return;
+    }
+    _isFetchingData = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final results = await Future.wait<dynamic>([
@@ -223,12 +254,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _replaceRows(rows);
       });
     } catch (_) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudo cargar asistencia.');
     } finally {
+      _isFetchingData = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }

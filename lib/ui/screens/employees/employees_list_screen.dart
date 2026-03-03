@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -40,20 +41,25 @@ class EmployeesListScreen extends StatefulWidget {
 }
 
 class _EmployeesListScreenState extends State<EmployeesListScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 8);
+
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
 
+  Timer? _autoRefreshTimer;
   List<Employee> _employees = const [];
   Map<int, String> _sectorNamesById = const {};
   _EmployeesOvertimeFilter _overtimeFilter = _EmployeesOvertimeFilter.todos;
   bool _isLoading = false;
   bool _isExportingExcel = false;
+  bool _isFetchingEmployees = false;
 
   @override
   void initState() {
     super.initState();
     _loadEmployees();
+    _startAutoRefresh();
   }
 
   @override
@@ -67,16 +73,37 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _searchController.dispose();
     _horizontalScrollController.dispose();
     _verticalScrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadEmployees() async {
-    setState(() {
-      _isLoading = true;
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted || _isFetchingEmployees || _isExportingExcel) {
+        return;
+      }
+      _loadEmployees(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadEmployees({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingEmployees) {
+      return;
+    }
+
+    _isFetchingEmployees = true;
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final query = _searchController.text.trim();
@@ -100,16 +127,23 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
         return;
       }
 
+      if (silentErrors) {
+        return;
+      }
+
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(content: Text('No se pudieron cargar empleados.')),
         );
     } finally {
+      _isFetchingEmployees = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }

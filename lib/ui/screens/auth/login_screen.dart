@@ -54,7 +54,9 @@ class _LoginScreenState extends State<LoginScreen> {
       _showError(error.message?.toString() ?? 'Credenciales invalidas.');
     } on StateError catch (error) {
       _showError(error.message);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Login error: $error');
+      debugPrint('Login stackTrace: $stackTrace');
       _showError('No se pudo iniciar sesion.');
     } finally {
       if (mounted) {

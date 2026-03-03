@@ -59,8 +59,9 @@ class CompanySettings extends Table {
       .withDefault(const Constant(0))();
 
   DateTimeColumn get updatedAt =>
-      dateTime().named('updated_at').withDefault(currentDateAndTime)();
+      dateTime().named('updated_at').clientDefault(() => DateTime.now())();
 
   @override
   Set<Column<Object>>? get primaryKey => {companyId};
 }
+

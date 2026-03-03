@@ -46,6 +46,12 @@ class PayrollDao extends DatabaseAccessor<AppDatabase> with _$PayrollDaoMixin {
     return update(payrollRuns).replace(run);
   }
 
+  Future<int> deletePayrollRunById(int payrollRunId) {
+    return (delete(
+      payrollRuns,
+    )..where((tbl) => tbl.id.equals(payrollRunId))).go();
+  }
+
   Future<int> deleteItemsByRun(int payrollRunId) {
     return (delete(
       payrollItems,

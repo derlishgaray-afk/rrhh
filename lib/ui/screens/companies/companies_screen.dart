@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
@@ -41,19 +43,58 @@ class CompaniesScreen extends StatefulWidget {
 }
 
 class _CompaniesScreenState extends State<CompaniesScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 8);
+
+  Timer? _autoRefreshTimer;
   List<Company> _companies = const [];
   bool _isLoading = false;
+  bool _isFetchingCompanies = false;
 
   @override
   void initState() {
     super.initState();
     _loadCompanies();
+    _startAutoRefresh();
   }
 
-  Future<void> _loadCompanies() async {
-    setState(() {
-      _isLoading = true;
+  @override
+  void didUpdateWidget(covariant CompaniesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.companyId != widget.companyId) {
+      _loadCompanies();
+    }
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted || _isFetchingCompanies) {
+        return;
+      }
+      _loadCompanies(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadCompanies({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingCompanies) {
+      return;
+    }
+    _isFetchingCompanies = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final companies = await widget.service.listCompanies();
@@ -65,12 +106,18 @@ class _CompaniesScreenState extends State<CompaniesScreen> {
         _companies = companies;
       });
     } catch (_) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudieron cargar las empresas.');
     } finally {
+      _isFetchingCompanies = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }

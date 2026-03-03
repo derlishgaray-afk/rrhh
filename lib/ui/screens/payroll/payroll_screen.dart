@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -26,6 +27,7 @@ class PayrollScreen extends StatefulWidget {
     required this.canUnlockPayroll,
     required this.canPrintPayroll,
     required this.canExportPayroll,
+    required this.isSuperAdmin,
     super.key,
   });
 
@@ -39,12 +41,14 @@ class PayrollScreen extends StatefulWidget {
   final bool canUnlockPayroll;
   final bool canPrintPayroll;
   final bool canExportPayroll;
+  final bool isSuperAdmin;
 
   @override
   State<PayrollScreen> createState() => _PayrollScreenState();
 }
 
 class _PayrollScreenState extends State<PayrollScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 8);
   static const int _gridColumnsCount = 17;
   static const Color _employeeNameColor = Color(0xFF123A73);
   static const Color _selectedRowColor = Color(0xFFE8F1FF);
@@ -87,6 +91,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   final Map<int, TextEditingController> _otherDiscountControllers = {};
   final Set<int> _savingOtherIncomeIds = <int>{};
   final Set<int> _savingOtherDiscountIds = <int>{};
+  Timer? _autoRefreshTimer;
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
   bool _isAutoRegenerating = false;
@@ -94,10 +99,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
   bool _isGenerating = false;
   bool _isLocking = false;
   bool _isUnlocking = false;
+  bool _isDeletingRun = false;
   bool _isExportingPdf = false;
   bool _isExportingExcel = false;
   bool _isPrinting = false;
   bool _isPrintingReceipt = false;
+  bool _isFetchingItems = false;
   PayrollPeriodStatus _periodStatus = const PayrollPeriodStatus(run: null);
   int? _selectedPayrollItemId;
   String? _activeEditingEmployeeName;
@@ -109,7 +116,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
   bool get _isOutputBusy =>
       _isExportingPdf || _isExportingExcel || _isPrinting || _isPrintingReceipt;
   bool get _isActionBusy =>
-      _isGenerating || _isLocking || _isUnlocking || _isOutputBusy;
+      _isGenerating ||
+      _isLocking ||
+      _isUnlocking ||
+      _isDeletingRun ||
+      _isOutputBusy;
   bool get _canGenerate =>
       widget.canGeneratePayroll && !_isLoading && !_isActionBusy && !_isLocked;
   bool get _canLock =>
@@ -120,6 +131,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
       !_isLocked;
   bool get _canUnlock =>
       widget.canUnlockPayroll && !_isLoading && !_isActionBusy && _isLocked;
+  bool get _canDeleteRun =>
+      widget.isSuperAdmin && !_isLoading && !_isActionBusy && _hasRun;
   bool get _canEditRows =>
       widget.canGeneratePayroll && !_isLoading && !_isActionBusy && !_isLocked;
   bool get _canOutput =>
@@ -158,6 +171,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       }
     });
     _loadItems();
+    _startAutoRefresh();
   }
 
   @override
@@ -170,6 +184,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _searchController.dispose();
     _horizontalScrollController.dispose();
     _verticalScrollController.dispose();
@@ -182,10 +197,34 @@ class _PayrollScreenState extends State<PayrollScreen> {
     super.dispose();
   }
 
-  Future<void> _loadItems() async {
-    setState(() {
-      _isLoading = true;
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted ||
+          _isFetchingItems ||
+          _isActionBusy ||
+          _savingOtherIncomeIds.isNotEmpty ||
+          _savingOtherDiscountIds.isNotEmpty) {
+        return;
+      }
+      _loadItems(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadItems({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingItems) {
+      return;
+    }
+    _isFetchingItems = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final periodStatusFuture = widget.service.getPayrollPeriodStatus(
@@ -245,12 +284,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
         }
       });
     } catch (_) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudo cargar la liquidacion.');
     } finally {
+      _isFetchingItems = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }
@@ -541,6 +586,76 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
+  Future<void> _deletePayrollRun() async {
+    if (!_canDeleteRun) {
+      return;
+    }
+
+    final shouldDelete = await _showDeletePayrollConfirmDialog();
+    if (shouldDelete != true) {
+      return;
+    }
+
+    setState(() {
+      _isDeletingRun = true;
+    });
+
+    try {
+      final deleted = await widget.service.deletePayrollRun(
+        companyId: widget.companyId,
+        year: _selectedYear,
+        month: _selectedMonth,
+      );
+      await _loadItems();
+      if (!mounted) {
+        return;
+      }
+
+      if (deleted) {
+        _showInfo('Liquidacion eliminada para el periodo seleccionado.');
+      } else {
+        _showInfo(
+          'No existe liquidacion generada para el periodo seleccionado.',
+        );
+      }
+    } catch (error) {
+      _showError('No se pudo borrar la liquidacion: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingRun = false;
+        });
+      }
+    }
+  }
+
+  Future<bool?> _showDeletePayrollConfirmDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Borrar liquidacion generada'),
+        content: Text(
+          'Esta accion eliminara toda la liquidacion de $_periodLabel para $_normalizedCompanyName. '
+          'Solo use esto para corregir datos de prueba o regenerar desde cero.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _activateEmployeeContext(PayrollItemView item) {
     final id = item.payrollItem.id;
     final name = item.employeeName;
@@ -662,10 +777,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
             title: previewTitle,
             fileName: fileName,
             initialPageFormat: PdfPageFormat.a4,
-            buildPdf: (format) => _buildDuplicateReceiptPdfBytes(
-              targetItems,
-              pageFormat: format,
-            ),
+            buildPdf: (format) =>
+                _buildDuplicateReceiptPdfBytes(targetItems, pageFormat: format),
           ),
         ),
       );
@@ -933,10 +1046,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 child: pw.Row(
                   children: [
                     pw.Expanded(
-                      child: pw.Container(
-                        height: 1,
-                        color: PdfColors.grey500,
-                      ),
+                      child: pw.Container(height: 1, color: PdfColors.grey500),
                     ),
                     pw.Padding(
                       padding: const pw.EdgeInsets.symmetric(horizontal: 12),
@@ -949,10 +1059,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       ),
                     ),
                     pw.Expanded(
-                      child: pw.Container(
-                        height: 1,
-                        color: PdfColors.grey500,
-                      ),
+                      child: pw.Container(height: 1, color: PdfColors.grey500),
                     ),
                   ],
                 ),
@@ -2038,6 +2145,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
                         : 'Desbloquear liquidacion',
                   ),
                 ),
+              if (widget.isSuperAdmin)
+                OutlinedButton.icon(
+                  onPressed: _canDeleteRun ? _deletePayrollRun : null,
+                  icon: const Icon(Icons.delete_forever),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                  ),
+                  label: Text(
+                    _isDeletingRun ? 'Borrando...' : 'Borrar liquidacion',
+                  ),
+                ),
               if (widget.canPrintPayroll) ...[
                 OutlinedButton.icon(
                   onPressed: _canPrintReceipt ? _printDuplicateReceipt : null,
@@ -2373,4 +2491,3 @@ class _PayrollPrintPreviewScreen extends StatelessWidget {
     );
   }
 }
-

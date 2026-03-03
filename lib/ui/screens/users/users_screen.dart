@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
@@ -14,23 +16,54 @@ class UsersScreen extends StatefulWidget {
 }
 
 class _UsersScreenState extends State<UsersScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 10);
+
+  Timer? _autoRefreshTimer;
   List<UserWithAccess> _users = const [];
   List<RoleWithPermissions> _roles = const [];
   List<Permission> _permissions = const [];
   List<Company> _companies = const [];
   bool _isLoading = false;
   bool _isSaving = false;
+  bool _isFetchingData = false;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _startAutoRefresh();
   }
 
-  Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted || _isSaving || _isFetchingData) {
+        return;
+      }
+      _loadData(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadData({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingData) {
+      return;
+    }
+    _isFetchingData = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final users = await widget.service.listUsersDetailed();
@@ -47,12 +80,18 @@ class _UsersScreenState extends State<UsersScreen> {
         _companies = companies;
       });
     } catch (error) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudo cargar usuarios/roles: $error');
     } finally {
+      _isFetchingData = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }

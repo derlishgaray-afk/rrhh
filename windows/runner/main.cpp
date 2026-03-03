@@ -5,6 +5,9 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+#define WIDEN2(x) L##x
+#define WIDEN(x) WIDEN2(x)
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   // Attach to console when present (e.g., 'flutter run') or create a
@@ -27,7 +30,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"rrhh_app", origin, size)) {
+  const wchar_t* window_title = L"RRHH App v" WIDEN(FLUTTER_VERSION);
+  if (!window.Create(window_title, origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

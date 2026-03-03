@@ -208,6 +208,7 @@ class SecuritySettingKeys {
   SecuritySettingKeys._();
 
   static const String currentUserId = 'current_user_id';
+  static const String currentUserIdByDevicePrefix = 'current_user_id_device_';
 }
 
 class SecurityBootstrap {

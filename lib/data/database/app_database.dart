@@ -2,8 +2,10 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:drift_postgres/drift_postgres.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:postgres/postgres.dart' as pg;
 
 import '../../security/password_hasher.dart';
 import '../../security/security_constants.dart';
@@ -67,7 +69,19 @@ const String _activeCompanySettingKey = 'active_company_id';
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase({QueryExecutor? executor, bool usePostgres = false})
+    : _isPostgres = usePostgres,
+      super(executor ?? _openConnection(usePostgres: usePostgres));
+
+  factory AppDatabase.fromEnvironment() {
+    final config = DatabaseRuntimeConfig.fromEnvironment();
+    return AppDatabase(
+      executor: config.usePostgres ? _openPostgresConnection(config) : null,
+      usePostgres: config.usePostgres,
+    );
+  }
+
+  final bool _isPostgres;
 
   @override
   int get schemaVersion => 24;
@@ -362,7 +376,9 @@ class AppDatabase extends _$AppDatabase {
       }
     },
     beforeOpen: (details) async {
-      await customStatement('PRAGMA foreign_keys = ON');
+      if (!_isPostgres) {
+        await customStatement('PRAGMA foreign_keys = ON');
+      }
       await _seedSecurityModel();
     },
   );
@@ -429,6 +445,7 @@ class AppDatabase extends _$AppDatabase {
       }
 
       final roleByName = <String, Role>{};
+      final createdBaseRoleNames = <String>{};
       for (final roleName in RoleNames.baseRoles) {
         final existing = await (select(
           roles,
@@ -445,6 +462,7 @@ class AppDatabase extends _$AppDatabase {
             roles,
           )..where((tbl) => tbl.id.equals(insertedId))).getSingle();
           roleByName[roleName] = inserted;
+          createdBaseRoleNames.add(roleName);
         } else {
           if ((existing.description ?? '') != (description ?? '')) {
             await update(
@@ -456,8 +474,8 @@ class AppDatabase extends _$AppDatabase {
       }
 
       await _enforceRolePermissionMatrix(
-        roleByName: roleByName,
         permissionByKey: permissionByKey,
+        createdBaseRoleNames: createdBaseRoleNames,
       );
 
       final superAdminRole = roleByName[RoleNames.superAdmin];
@@ -474,8 +492,8 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> _enforceRolePermissionMatrix({
-    required Map<String, Role> roleByName,
     required Map<String, Permission> permissionByKey,
+    required Set<String> createdBaseRoleNames,
   }) async {
     final allPermissionsById = permissionByKey.values
         .map((permission) => permission.id)
@@ -499,7 +517,11 @@ class AppDatabase extends _$AppDatabase {
         targetPermissionIds = allPermissionsById;
       } else {
         final matrixPermissions = baseRolePermissionMatrix[role.name];
-        if (matrixPermissions != null) {
+        final shouldSeedDefaultMatrix =
+            matrixPermissions != null &&
+            (createdBaseRoleNames.contains(role.name) ||
+                currentPermissionIds.isEmpty);
+        if (shouldSeedDefaultMatrix) {
           targetPermissionIds = matrixPermissions
               .map((permissionKey) => permissionByKey[permissionKey]?.id)
               .whereType<int>()
@@ -608,10 +630,22 @@ class AppDatabase extends _$AppDatabase {
     TableInfo<Table, dynamic> table,
     GeneratedColumn column,
   ) async {
-    final rows = await customSelect(
-      'PRAGMA table_info(${table.actualTableName})',
-    ).get();
-    final existingColumns = rows.map((row) => row.read<String>('name')).toSet();
+    Set<String> existingColumns;
+    if (_isPostgres) {
+      final rows = await customSelect(
+        'SELECT column_name FROM information_schema.columns '
+        'WHERE table_schema = current_schema() AND table_name = ?',
+        variables: [Variable.withString(table.actualTableName)],
+      ).get();
+      existingColumns = rows
+          .map((row) => row.read<String>('column_name'))
+          .toSet();
+    } else {
+      final rows = await customSelect(
+        'PRAGMA table_info(${table.actualTableName})',
+      ).get();
+      existingColumns = rows.map((row) => row.read<String>('name')).toSet();
+    }
 
     if (!existingColumns.contains(column.$name)) {
       await m.addColumn(table, column);
@@ -622,13 +656,22 @@ class AppDatabase extends _$AppDatabase {
     Migrator m,
     TableInfo<Table, dynamic> table,
   ) async {
-    final rows = await customSelect(
-      'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
-      variables: [
-        Variable.withString('table'),
-        Variable.withString(table.actualTableName),
-      ],
-    ).get();
+    late final List<QueryRow> rows;
+    if (_isPostgres) {
+      rows = await customSelect(
+        'SELECT table_name FROM information_schema.tables '
+        'WHERE table_schema = current_schema() AND table_name = ?',
+        variables: [Variable.withString(table.actualTableName)],
+      ).get();
+    } else {
+      rows = await customSelect(
+        'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
+        variables: [
+          Variable.withString('table'),
+          Variable.withString(table.actualTableName),
+        ],
+      ).get();
+    }
 
     if (rows.isEmpty) {
       await m.createTable(table);
@@ -671,10 +714,134 @@ class AppDatabase extends _$AppDatabase {
   }
 }
 
-LazyDatabase _openConnection() {
+class DatabaseRuntimeConfig {
+  DatabaseRuntimeConfig({
+    required this.usePostgres,
+    required this.host,
+    required this.port,
+    required this.database,
+    required this.username,
+    required this.password,
+    required this.sslMode,
+    this.logStatements = false,
+  });
+
+  final bool usePostgres;
+  final String host;
+  final int port;
+  final String database;
+  final String username;
+  final String password;
+  final pg.SslMode sslMode;
+  final bool logStatements;
+
+  static DatabaseRuntimeConfig fromEnvironment() {
+    const defineMode = String.fromEnvironment('DB_MODE');
+    const defineHost = String.fromEnvironment('DB_HOST');
+    const definePort = String.fromEnvironment('DB_PORT');
+    const defineName = String.fromEnvironment('DB_NAME');
+    const defineUser = String.fromEnvironment('DB_USER');
+    const definePassword = String.fromEnvironment('DB_PASSWORD');
+    const defineLogStatements = String.fromEnvironment('DB_LOG_STATEMENTS');
+
+    String readValue(String defineValue, String envKey) {
+      final fromDefine = defineValue.trim();
+      if (fromDefine.isNotEmpty) {
+        return fromDefine;
+      }
+      final fromEnv = Platform.environment[envKey]?.trim();
+      if (fromEnv == null || fromEnv.isEmpty) {
+        return '';
+      }
+      return fromEnv;
+    }
+
+    final mode = readValue(defineMode, 'DB_MODE').toLowerCase();
+    final usePostgres = mode == 'postgres';
+    final host = readValue(defineHost, 'DB_HOST');
+    final portValue = readValue(definePort, 'DB_PORT');
+    final database = readValue(defineName, 'DB_NAME');
+    final username = readValue(defineUser, 'DB_USER');
+    final password = readValue(definePassword, 'DB_PASSWORD');
+    final logStatementsRaw = readValue(
+      defineLogStatements,
+      'DB_LOG_STATEMENTS',
+    ).toLowerCase();
+    final sslModeRaw = readValue(
+      const String.fromEnvironment('DB_SSL_MODE'),
+      'DB_SSL_MODE',
+    ).toLowerCase();
+    final logStatements =
+        logStatementsRaw == '1' ||
+        logStatementsRaw == 'true' ||
+        logStatementsRaw == 'yes';
+    final sslMode = switch (sslModeRaw) {
+      'require' => pg.SslMode.require,
+      'verifyfull' || 'verify_full' || 'verify-full' => pg.SslMode.verifyFull,
+      'disable' || '' => pg.SslMode.disable,
+      _ => pg.SslMode.disable,
+    };
+
+    if (!usePostgres) {
+      return DatabaseRuntimeConfig(
+        usePostgres: false,
+        host: '',
+        port: 5432,
+        database: '',
+        username: '',
+        password: '',
+        sslMode: pg.SslMode.disable,
+        logStatements: logStatements,
+      );
+    }
+
+    final parsedPort = int.tryParse(portValue);
+    if (host.isEmpty ||
+        database.isEmpty ||
+        username.isEmpty ||
+        password.isEmpty) {
+      throw StateError(
+        'DB_MODE=postgres requiere DB_HOST, DB_NAME, DB_USER y DB_PASSWORD.',
+      );
+    }
+
+    return DatabaseRuntimeConfig(
+      usePostgres: true,
+      host: host,
+      port: parsedPort ?? 5432,
+      database: database,
+      username: username,
+      password: password,
+      sslMode: sslMode,
+      logStatements: logStatements,
+    );
+  }
+}
+
+QueryExecutor _openConnection({required bool usePostgres}) {
+  if (usePostgres) {
+    throw StateError(
+      'Use _openPostgresConnection(config) para inicializar PostgreSQL.',
+    );
+  }
+
   return LazyDatabase(() async {
     final dbDirectory = await getApplicationSupportDirectory();
     final dbFile = File(p.join(dbDirectory.path, 'rrhh_app.sqlite'));
     return NativeDatabase.createInBackground(dbFile);
   });
+}
+
+QueryExecutor _openPostgresConnection(DatabaseRuntimeConfig config) {
+  return PgDatabase(
+    endpoint: pg.Endpoint(
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      username: config.username,
+      password: config.password,
+    ),
+    settings: pg.ConnectionSettings(sslMode: config.sslMode),
+    logStatements: config.logStatements,
+  );
 }

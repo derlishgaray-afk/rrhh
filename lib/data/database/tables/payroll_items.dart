@@ -59,5 +59,6 @@ class PayrollItems extends Table {
   RealColumn get netPay => real().named('net_pay')();
 
   DateTimeColumn get createdAt =>
-      dateTime().named('created_at').withDefault(currentDateAndTime)();
+      dateTime().named('created_at').clientDefault(() => DateTime.now())();
 }
+

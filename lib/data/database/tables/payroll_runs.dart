@@ -12,7 +12,7 @@ class PayrollRuns extends Table {
   IntColumn get month => integer()();
 
   DateTimeColumn get generatedAt =>
-      dateTime().named('generated_at').withDefault(currentDateAndTime)();
+      dateTime().named('generated_at').clientDefault(() => DateTime.now())();
 
   TextColumn get notes => text().nullable()();
 
@@ -31,3 +31,4 @@ class PayrollRuns extends Table {
     {companyId, year, month},
   ];
 }
+

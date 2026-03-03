@@ -83,5 +83,6 @@ class Employees extends Table {
   BoolColumn get active => boolean().withDefault(const Constant(true))();
 
   DateTimeColumn get createdAt =>
-      dateTime().named('created_at').withDefault(currentDateAndTime)();
+      dateTime().named('created_at').clientDefault(() => DateTime.now())();
 }
+

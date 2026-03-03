@@ -1,16 +1,27 @@
 # rrhh_app
 
-A new Flutter project.
+Aplicacion RRHH construida con Flutter.
 
-## Getting Started
+## Generar instalable para Windows
 
-This project is a starting point for a Flutter application.
+Prerequisitos:
 
-A few resources to get you started if this is your first Flutter project:
+- Flutter instalado y en PATH.
+- (Opcional) Inno Setup instalado y `iscc` en PATH para generar `.exe` instalador.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+Comando:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tool\build_windows_installer.ps1
+```
+
+Resultado:
+
+- Si hay Inno Setup: genera `dist\rrhh_app_setup_<version>.exe`
+- Si no hay Inno Setup: genera `dist\rrhh_app_windows_portable_<version>.zip`
+
+Opcional (forzar version/publisher):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tool\build_windows_installer.ps1 -Version 1.0.0 -Publisher "Mi Empresa"
+```

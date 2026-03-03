@@ -378,6 +378,7 @@ class _MainScreenState extends State<MainScreen> {
           canUnlockPayroll: _hasPermission(PermissionKeys.payrollUnlock),
           canPrintPayroll: _hasPermission(PermissionKeys.payrollPrint),
           canExportPayroll: _hasPermission(PermissionKeys.payrollExport),
+          isSuperAdmin: _isSuperAdmin,
         );
       case 'settings':
         return SettingsScreen(

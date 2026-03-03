@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -23,6 +25,8 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 12);
+
   final _formKey = GlobalKey<FormState>();
   final _ipsEmployeeRateController = TextEditingController();
   final _ipsEmployerRateController = TextEditingController();
@@ -40,15 +44,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _lateArrivalToleranceMinutesController = TextEditingController();
   final _lateArrivalAllowedTimesPerMonthController = TextEditingController();
 
+  Timer? _autoRefreshTimer;
   bool _isLoading = false;
   bool _isSaving = false;
   bool _isSavingHolidays = false;
+  bool _isFetchingSettings = false;
   Set<DateTime> _holidayDates = <DateTime>{};
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _startAutoRefresh();
   }
 
   @override
@@ -61,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
     _ipsEmployeeRateController.dispose();
     _ipsEmployerRateController.dispose();
     _minimumWageController.dispose();
@@ -79,10 +87,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  Future<void> _loadSettings() async {
-    setState(() {
-      _isLoading = true;
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      final hasFocusedInput =
+          FocusManager.instance.primaryFocus?.hasFocus ?? false;
+      if (!mounted ||
+          _isFetchingSettings ||
+          _isSaving ||
+          _isSavingHolidays ||
+          hasFocusedInput) {
+        return;
+      }
+      _loadSettings(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadSettings({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingSettings) {
+      return;
+    }
+    _isFetchingSettings = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final settings = await widget.service.getOrCreateSettings(
@@ -129,12 +163,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _holidayDates = widget.service.parseHolidayDates(settings.holidayDates);
       });
     } catch (_) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudo cargar configuracion.');
     } finally {
+      _isFetchingSettings = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }

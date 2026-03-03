@@ -36,5 +36,6 @@ class AttendanceEvents extends Table {
   TextColumn get notes => text().nullable()();
 
   DateTimeColumn get createdAt =>
-      dateTime().named('created_at').withDefault(currentDateAndTime)();
+      dateTime().named('created_at').clientDefault(() => DateTime.now())();
 }
+

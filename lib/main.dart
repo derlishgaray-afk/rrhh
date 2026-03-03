@@ -20,7 +20,7 @@ import 'ui/screens/auth/login_screen.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final database = AppDatabase();
+  final database = AppDatabase.fromEnvironment();
   final authorizationService = AuthorizationService(
     database.settingsDao,
     database.securityDao,

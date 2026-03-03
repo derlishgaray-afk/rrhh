@@ -102,9 +102,10 @@ class $CompaniesTable extends Companies
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
@@ -117,7 +118,7 @@ class $CompaniesTable extends Companies
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -672,9 +673,10 @@ class $DepartmentsTable extends Departments
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
@@ -687,7 +689,7 @@ class $DepartmentsTable extends Departments
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -1069,9 +1071,10 @@ class $DepartmentSectorsTable extends DepartmentSectors
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
@@ -1084,7 +1087,7 @@ class $DepartmentSectorsTable extends DepartmentSectors
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -1770,9 +1773,10 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("ips_enabled" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("ips_enabled" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _childrenCountMeta = const VerificationMeta(
@@ -1797,9 +1801,10 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("allow_overtime" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("allow_overtime" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _biometricClockEnabledMeta =
@@ -1812,9 +1817,10 @@ class $EmployeesTable extends Employees
         false,
         type: DriftSqlType.bool,
         requiredDuringInsert: false,
-        defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'CHECK ("biometric_clock_enabled" IN (0, 1))',
-        ),
+        defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+          SqlDialect.sqlite: 'CHECK ("biometric_clock_enabled" IN (0, 1))',
+          SqlDialect.postgres: '',
+        }),
         defaultValue: const Constant(true),
       );
   static const VerificationMeta _hasEmbargoMeta = const VerificationMeta(
@@ -1827,9 +1833,10 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("has_embargo" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("has_embargo" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(false),
   );
   static const VerificationMeta _embargoAccountMeta = const VerificationMeta(
@@ -1940,9 +1947,10 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
@@ -1955,7 +1963,7 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -3384,7 +3392,7 @@ class $AttendanceEventsTable extends AttendanceEvents
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -4281,7 +4289,7 @@ class $CompanySettingsTable extends CompanySettings
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -5222,7 +5230,7 @@ class $AdvancesTable extends Advances with TableInfo<$AdvancesTable, Advance> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -5646,9 +5654,10 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
@@ -5661,7 +5670,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _lastLoginAtMeta = const VerificationMeta(
     'lastLoginAt',
@@ -6109,7 +6118,7 @@ class $PayrollRunsTable extends PayrollRuns
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _notesMeta = const VerificationMeta('notes');
   @override
@@ -6130,9 +6139,10 @@ class $PayrollRunsTable extends PayrollRuns
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("is_locked" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("is_locked" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(false),
   );
   static const VerificationMeta _lockedAtMeta = const VerificationMeta(
@@ -6889,7 +6899,7 @@ class $PayrollItemsTable extends PayrollItems
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -8772,9 +8782,10 @@ class $UserCompanyAccessTable extends UserCompanyAccess
     false,
     type: DriftSqlType.bool,
     requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("active" IN (0, 1))',
-    ),
+    defaultConstraints: GeneratedColumn.constraintsDependsOnDialect({
+      SqlDialect.sqlite: 'CHECK ("active" IN (0, 1))',
+      SqlDialect.postgres: '',
+    }),
     defaultValue: const Constant(true),
   );
   @override

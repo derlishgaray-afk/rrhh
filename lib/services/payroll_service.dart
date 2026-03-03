@@ -450,6 +450,29 @@ class PayrollService {
     );
   }
 
+  Future<bool> deletePayrollRun({
+    required int companyId,
+    required int year,
+    required int month,
+  }) async {
+    await _authorizationService.ensureSuperAdmin(
+      message: 'Solo SUPER_ADMIN puede borrar liquidaciones generadas.',
+    );
+    _validatePeriod(companyId: companyId, year: year, month: month);
+
+    final run = await _payrollDao.getPayrollRunByPeriod(
+      companyId: companyId,
+      year: year,
+      month: month,
+    );
+    if (run == null) {
+      return false;
+    }
+
+    await _payrollDao.deletePayrollRunById(run.id);
+    return true;
+  }
+
   void _ensureUnlockWithinAllowedWindow({
     required int year,
     required int month,

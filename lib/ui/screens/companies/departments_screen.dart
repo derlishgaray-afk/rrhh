@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/database/app_database.dart';
@@ -26,13 +28,18 @@ class DepartmentsScreen extends StatefulWidget {
 }
 
 class _DepartmentsScreenState extends State<DepartmentsScreen> {
+  static const Duration _autoRefreshInterval = Duration(seconds: 8);
+
+  Timer? _autoRefreshTimer;
   List<Department> _departments = const [];
   bool _isLoading = false;
+  bool _isFetchingDepartments = false;
 
   @override
   void initState() {
     super.initState();
     _loadDepartments();
+    _startAutoRefresh();
   }
 
   @override
@@ -43,10 +50,36 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
     }
   }
 
-  Future<void> _loadDepartments() async {
-    setState(() {
-      _isLoading = true;
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (!mounted || _isFetchingDepartments) {
+        return;
+      }
+      _loadDepartments(showLoader: false, silentErrors: true);
     });
+  }
+
+  Future<void> _loadDepartments({
+    bool showLoader = true,
+    bool silentErrors = false,
+  }) async {
+    if (_isFetchingDepartments) {
+      return;
+    }
+    _isFetchingDepartments = true;
+
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final departments = await widget.service.listDepartmentsByCompany(
@@ -59,12 +92,18 @@ class _DepartmentsScreenState extends State<DepartmentsScreen> {
         _departments = departments;
       });
     } catch (_) {
+      if (silentErrors) {
+        return;
+      }
       _showError('No se pudieron cargar los departamentos.');
     } finally {
+      _isFetchingDepartments = false;
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        if (showLoader) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }
