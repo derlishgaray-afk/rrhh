@@ -90,9 +90,10 @@ class AppDatabase extends _$AppDatabase {
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
-      await _seedSecurityModel();
+      await _seedSecurityModel(enforceRoleMatrix: true);
     },
     onUpgrade: (m, from, to) async {
+      var seedSecurityDefaultsOnUpgrade = false;
       if (from < 2) {
         await m.createTable(companies);
         await m.createTable(appSettings);
@@ -127,7 +128,7 @@ class AppDatabase extends _$AppDatabase {
               employees.biometricClockEnabled: const Constant(true),
               employees.hasEmbargo: const Constant(false),
               employees.workStartTime1: const Constant('06:00'),
-              employees.workStartTime2: const Constant('15:00'),
+              employees.workStartTime2: const Constant('14:00'),
               employees.workStartTime3: const Constant('18:00'),
             },
           ),
@@ -337,6 +338,7 @@ class AppDatabase extends _$AppDatabase {
         await _createTableIfMissing(m, permissions);
         await _createTableIfMissing(m, rolePermissions);
         await _createTableIfMissing(m, userCompanyAccess);
+        seedSecurityDefaultsOnUpgrade = true;
       }
 
       if (from < 21) {
@@ -374,6 +376,10 @@ class AppDatabase extends _$AppDatabase {
       if (from < 24) {
         await _addColumnIfMissing(m, companies, companies.abbreviation);
       }
+
+      if (seedSecurityDefaultsOnUpgrade) {
+        await _seedSecurityModel(enforceRoleMatrix: true);
+      }
     },
     beforeOpen: (details) async {
       if (!_isPostgres) {
@@ -383,7 +389,7 @@ class AppDatabase extends _$AppDatabase {
     },
   );
 
-  Future<void> _seedSecurityModel() async {
+  Future<void> _seedSecurityModel({bool enforceRoleMatrix = false}) async {
     await transaction(() async {
       final permissionDescriptions = <String, String>{
         PermissionKeys.usersRead: 'Ver usuarios.',
@@ -473,10 +479,16 @@ class AppDatabase extends _$AppDatabase {
         }
       }
 
-      await _enforceRolePermissionMatrix(
-        permissionByKey: permissionByKey,
-        createdBaseRoleNames: createdBaseRoleNames,
-      );
+      if (enforceRoleMatrix) {
+        await _enforceRolePermissionMatrix(
+          permissionByKey: permissionByKey,
+          createdBaseRoleNames: createdBaseRoleNames,
+        );
+      } else {
+        await _ensureSuperAdminHasAllPermissions(
+          permissionByKey: permissionByKey,
+        );
+      }
 
       final superAdminRole = roleByName[RoleNames.superAdmin];
       if (superAdminRole == null) {
@@ -489,6 +501,37 @@ class AppDatabase extends _$AppDatabase {
         ensureUserIds: {defaultSuperAdminUserId},
       );
     });
+  }
+
+  Future<void> _ensureSuperAdminHasAllPermissions({
+    required Map<String, Permission> permissionByKey,
+  }) async {
+    final superAdminRole = await (select(
+      roles,
+    )..where((tbl) => tbl.name.equals(RoleNames.superAdmin))).getSingleOrNull();
+    if (superAdminRole == null) {
+      return;
+    }
+
+    final rolePermissionsRows = await (select(
+      rolePermissions,
+    )..where((tbl) => tbl.roleId.equals(superAdminRole.id))).get();
+    final currentPermissionIds = rolePermissionsRows
+        .map((row) => row.permissionId)
+        .toSet();
+    final expectedPermissionIds = permissionByKey.values
+        .map((permission) => permission.id)
+        .toSet();
+    final toInsert = expectedPermissionIds.difference(currentPermissionIds);
+
+    for (final permissionId in toInsert) {
+      await into(rolePermissions).insert(
+        RolePermissionsCompanion.insert(
+          roleId: superAdminRole.id,
+          permissionId: permissionId,
+        ),
+      );
+    }
   }
 
   Future<void> _enforceRolePermissionMatrix({

@@ -22,20 +22,37 @@ class PayrollDao extends DatabaseAccessor<AppDatabase> with _$PayrollDaoMixin {
     required int companyId,
     required int year,
     required int month,
-  }) {
-    return (select(payrollRuns)..where(
-          (tbl) =>
-              tbl.companyId.equals(companyId) &
-              tbl.year.equals(year) &
-              tbl.month.equals(month),
-        ))
-        .getSingleOrNull();
+  }) async {
+    final rows =
+        await (select(payrollRuns)
+              ..where(
+                (tbl) =>
+                    tbl.companyId.equals(companyId) &
+                    tbl.year.equals(year) &
+                    tbl.month.equals(month),
+              )
+              ..orderBy([
+                (tbl) => OrderingTerm.desc(tbl.generatedAt),
+                (tbl) => OrderingTerm.desc(tbl.id),
+              ])
+              ..limit(1))
+            .get();
+    if (rows.isEmpty) {
+      return null;
+    }
+    return rows.first;
   }
 
-  Future<PayrollRun?> getPayrollRunById(int payrollRunId) {
-    return (select(
-      payrollRuns,
-    )..where((tbl) => tbl.id.equals(payrollRunId))).getSingleOrNull();
+  Future<PayrollRun?> getPayrollRunById(int payrollRunId) async {
+    final rows =
+        await (select(payrollRuns)
+              ..where((tbl) => tbl.id.equals(payrollRunId))
+              ..limit(1))
+            .get();
+    if (rows.isEmpty) {
+      return null;
+    }
+    return rows.first;
   }
 
   Future<int> insertPayrollRun(PayrollRunsCompanion run) {

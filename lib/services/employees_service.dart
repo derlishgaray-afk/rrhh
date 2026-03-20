@@ -16,6 +16,12 @@ class EmployeesService {
   final DepartmentsDao _departmentsDao;
   final AuthorizationService _authorizationService;
 
+  Future<void> ensureSuperAdminEmployeeImport() {
+    return _authorizationService.ensureSuperAdmin(
+      message: 'Solo SUPER_ADMIN puede importar empleados desde Excel.',
+    );
+  }
+
   Future<int> createEmployee({
     required int companyId,
     required int? departmentId,
@@ -608,7 +614,7 @@ class EmployeesService {
 
 const Set<String> _allowedEmployeeTypes = {'mensual', 'jornalero', 'servicio'};
 const String _defaultWorkStartTime1 = '06:00';
-const String _defaultWorkStartTime2 = '15:00';
+const String _defaultWorkStartTime2 = '14:00';
 const String _defaultWorkStartTime3 = '18:00';
 final RegExp _timeRegExp = RegExp(r'^(\\d{1,2})[:.,](\\d{2})$');
 

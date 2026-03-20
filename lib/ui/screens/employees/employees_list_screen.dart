@@ -14,6 +14,7 @@ import '../../../services/department_service.dart';
 import '../../../services/employee_name_formatter.dart';
 import '../../../services/employees_service.dart';
 import '../../utils/guarani_currency.dart';
+import '../../utils/safe_excel_decoder.dart';
 import 'employee_form_dialog.dart';
 
 class EmployeesListScreen extends StatefulWidget {
@@ -22,6 +23,7 @@ class EmployeesListScreen extends StatefulWidget {
     required this.departmentService,
     required this.companyId,
     required this.companyName,
+    required this.isSuperAdmin,
     required this.canCreateEmployee,
     required this.canUpdateEmployee,
     required this.canDeleteEmployee,
@@ -32,6 +34,7 @@ class EmployeesListScreen extends StatefulWidget {
   final DepartmentService departmentService;
   final int companyId;
   final String companyName;
+  final bool isSuperAdmin;
   final bool canCreateEmployee;
   final bool canUpdateEmployee;
   final bool canDeleteEmployee;
@@ -53,6 +56,7 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
   _EmployeesOvertimeFilter _overtimeFilter = _EmployeesOvertimeFilter.todos;
   bool _isLoading = false;
   bool _isExportingExcel = false;
+  bool _isImportingExcel = false;
   bool _isFetchingEmployees = false;
 
   @override
@@ -83,7 +87,10 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
     _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
-      if (!mounted || _isFetchingEmployees || _isExportingExcel) {
+      if (!mounted ||
+          _isFetchingEmployees ||
+          _isExportingExcel ||
+          _isImportingExcel) {
         return;
       }
       _loadEmployees(showLoader: false, silentErrors: true);
@@ -216,6 +223,24 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
   }
 
   String _formatSalary(double value) => GuaraniCurrency.format(value);
+
+  void _showError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showInfo(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<Map<int, String>> _loadSectorNamesById() async {
     try {
@@ -366,6 +391,697 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
         });
       }
     }
+  }
+
+  Future<void> _importEmployeesFromExcel() async {
+    if (_isImportingExcel) {
+      return;
+    }
+
+    try {
+      await widget.service.ensureSuperAdminEmployeeImport();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('$error')));
+      return;
+    }
+
+    final pickedFile = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['xlsx'],
+      withData: true,
+    );
+    if (pickedFile == null || pickedFile.files.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isImportingExcel = true;
+    });
+
+    try {
+      final file = pickedFile.files.first;
+      final bytes = file.bytes;
+      final filePath = file.path;
+      if (bytes == null && (filePath == null || filePath.isEmpty)) {
+        throw ArgumentError('No se pudo leer el archivo seleccionado.');
+      }
+      final payload = bytes ?? await File(filePath!).readAsBytes();
+
+      final workbook = decodeExcelBytesSafe(payload);
+      if (workbook.tables.isEmpty) {
+        throw ArgumentError('El archivo no contiene hojas para importar.');
+      }
+
+      final sheet = workbook.tables.values.first;
+      final reference = await _loadEmployeeImportReference();
+      final parsed = _parseEmployeeImportSheet(
+        sheet: sheet,
+        reference: reference,
+      );
+
+      final totalCandidateRows = parsed.rows.length;
+      final totalParsedErrors = parsed.errors.length;
+      if (totalCandidateRows <= 0 && totalParsedErrors <= 0) {
+        _showInfo('El archivo no contiene filas de empleados para importar.');
+        return;
+      }
+
+      final shouldProceed = await _confirmEmployeeImport(
+        rowsToImport: totalCandidateRows,
+        rowsWithErrors: totalParsedErrors,
+      );
+      if (shouldProceed != true) {
+        return;
+      }
+
+      final importErrors = <String>[...parsed.errors];
+      var imported = 0;
+      for (final row in parsed.rows) {
+        try {
+          await widget.service.createEmployee(
+            companyId: widget.companyId,
+            departmentId: row.departmentId,
+            sectorId: row.sectorId,
+            jobTitle: row.jobTitle,
+            workLocation: row.workLocation,
+            firstNames: row.firstNames,
+            lastNames: row.lastNames,
+            documentNumber: row.documentNumber,
+            hireDate: row.hireDate,
+            employeeType: row.employeeType,
+            baseSalary: row.baseSalary,
+            ipsEnabled: row.ipsEnabled,
+            childrenCount: row.childrenCount,
+            allowOvertime: row.allowOvertime,
+            biometricClockEnabled: true,
+            hasEmbargo: false,
+            phone: row.phone,
+            address: row.address,
+            active: row.active,
+          );
+          imported += 1;
+        } catch (error) {
+          importErrors.add('Fila ${row.rowNumber}: $error');
+        }
+      }
+
+      if (imported > 0) {
+        await _loadEmployees();
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      await _showEmployeeImportResultDialog(
+        imported: imported,
+        failed: importErrors.length,
+        errors: importErrors,
+      );
+    } on ArgumentError catch (error) {
+      _showError(error.message?.toString() ?? 'Archivo invalido.');
+    } catch (error) {
+      _showError('No se pudo importar empleados: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isImportingExcel = false;
+        });
+      }
+    }
+  }
+
+  Future<_EmployeeImportReference> _loadEmployeeImportReference() async {
+    final departments = await widget.departmentService.listDepartmentsByCompany(
+      widget.companyId,
+    );
+
+    final sectorsByDepartment = await Future.wait(
+      departments.map(
+        (department) =>
+            widget.departmentService.listSectorsByDepartment(department.id),
+      ),
+    );
+
+    final sectors = <_EmployeeImportSectorReference>[];
+    for (var index = 0; index < departments.length; index++) {
+      final department = departments[index];
+      final departmentSectors = sectorsByDepartment[index];
+      for (final sector in departmentSectors) {
+        sectors.add(
+          _EmployeeImportSectorReference(
+            department: department,
+            sector: sector,
+          ),
+        );
+      }
+    }
+
+    return _EmployeeImportReference(departments: departments, sectors: sectors);
+  }
+
+  _EmployeeImportParseResult _parseEmployeeImportSheet({
+    required xl.Sheet sheet,
+    required _EmployeeImportReference reference,
+  }) {
+    final rows = sheet.rows;
+    if (rows.isEmpty) {
+      throw ArgumentError('El archivo no contiene filas para importar.');
+    }
+
+    final headerRow = rows.first;
+    final headerIndexes = <String, int>{};
+    for (var i = 0; i < headerRow.length; i++) {
+      final header = _normalizeImportHeader(_cellText(headerRow[i]));
+      if (header.isNotEmpty && !headerIndexes.containsKey(header)) {
+        headerIndexes[header] = i;
+      }
+    }
+
+    int? findHeader(List<String> aliases) {
+      for (final alias in aliases) {
+        final normalized = _normalizeImportHeader(alias);
+        final index = headerIndexes[normalized];
+        if (index != null) {
+          return index;
+        }
+      }
+      return null;
+    }
+
+    final nombresIndex = findHeader(const ['nombres', 'nombre(s)']);
+    final apellidosIndex = findHeader(const ['apellidos', 'apellido(s)']);
+    final nombreCompletoIndex = findHeader(const ['nombre', 'nombre completo']);
+    final documentoIndex = findHeader(const ['documento', 'cedula', 'ci']);
+    final departamentoIndex = findHeader(const ['departamento', 'dpto']);
+    final sectorIndex = findHeader(const ['sector']);
+    final cargoIndex = findHeader(const ['cargo', 'puesto']);
+    final lugarTrabajoIndex = findHeader(const [
+      'lugar trabajo',
+      'lugar de trabajo',
+      'sede',
+    ]);
+    final salarioIndex = findHeader(const [
+      'salario',
+      'salario base',
+      'sueldo',
+    ]);
+    final fechaIngresoIndex = findHeader(const [
+      'fecha ingreso',
+      'fecha de ingreso',
+      'ingreso',
+    ]);
+    final tipoIndex = findHeader(const [
+      'tipo',
+      'tipo empleado',
+      'tipo de empleado',
+    ]);
+    final horasExtraIndex = findHeader(const [
+      'horas extra',
+      'hora extra',
+      'overtime',
+    ]);
+    final estadoIndex = findHeader(const ['estado', 'activo']);
+    final ipsIndex = findHeader(const ['ips', 'aporta ips']);
+    final hijosIndex = findHeader(const ['hijos', 'cantidad hijos']);
+    final telefonoIndex = findHeader(const ['telefono', 'tel']);
+    final direccionIndex = findHeader(const ['direccion', 'domicilio']);
+
+    final missingColumns = <String>[];
+    if (documentoIndex == null) {
+      missingColumns.add('Documento');
+    }
+    if (departamentoIndex == null) {
+      missingColumns.add('Departamento');
+    }
+    if (sectorIndex == null) {
+      missingColumns.add('Sector');
+    }
+    if (cargoIndex == null) {
+      missingColumns.add('Cargo');
+    }
+    if (lugarTrabajoIndex == null) {
+      missingColumns.add('Lugar trabajo');
+    }
+    if (salarioIndex == null) {
+      missingColumns.add('Salario');
+    }
+    final hasSplitNameColumns = nombresIndex != null && apellidosIndex != null;
+    final hasFullNameColumn = nombreCompletoIndex != null;
+    if (!hasSplitNameColumns && !hasFullNameColumn) {
+      missingColumns.add('Nombres + Apellidos (o Nombre)');
+    }
+
+    if (missingColumns.isNotEmpty) {
+      throw ArgumentError(
+        'Faltan columnas requeridas: ${missingColumns.join(', ')}.',
+      );
+    }
+
+    final parseErrors = <String>[];
+    final parsedRows = <_EmployeeImportDraft>[];
+    final seenDocuments = <String>{};
+
+    for (var rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+      final row = rows[rowIndex];
+      final visualRow = rowIndex + 1;
+      if (_isExcelRowBlank(row)) {
+        continue;
+      }
+
+      final documento = _cellText(_cellAt(row, documentoIndex!)).trim();
+      if (documento.isEmpty) {
+        parseErrors.add('Fila $visualRow: Documento es obligatorio.');
+        continue;
+      }
+
+      final normalizedDocument = _normalizeDocumentLookup(documento);
+      if (normalizedDocument.isEmpty) {
+        parseErrors.add(
+          'Fila $visualRow: Documento invalido, use valores alfanumericos.',
+        );
+        continue;
+      }
+      if (!seenDocuments.add(normalizedDocument)) {
+        parseErrors.add(
+          'Fila $visualRow: Documento duplicado dentro del archivo ($documento).',
+        );
+        continue;
+      }
+
+      String firstNames;
+      String lastNames;
+      if (hasSplitNameColumns) {
+        firstNames = _cellText(_cellAt(row, nombresIndex)).trim();
+        lastNames = _cellText(_cellAt(row, apellidosIndex)).trim();
+      } else {
+        final fullName = _cellText(_cellAt(row, nombreCompletoIndex!)).trim();
+        final parts = fullName
+            .split(RegExp(r'\s+'))
+            .where((part) => part.trim().isNotEmpty)
+            .toList();
+        if (parts.length < 2) {
+          parseErrors.add(
+            'Fila $visualRow: Nombre invalido. Use Nombres y Apellidos.',
+          );
+          continue;
+        }
+        firstNames = parts.sublist(0, parts.length - 1).join(' ');
+        lastNames = parts.last;
+      }
+
+      if (firstNames.isEmpty || lastNames.isEmpty) {
+        parseErrors.add(
+          'Fila $visualRow: Nombres y Apellidos son obligatorios.',
+        );
+        continue;
+      }
+
+      final departamentoNombre = _cellText(
+        _cellAt(row, departamentoIndex!),
+      ).trim();
+      final sectorNombre = _cellText(_cellAt(row, sectorIndex!)).trim();
+      if (departamentoNombre.isEmpty || sectorNombre.isEmpty) {
+        parseErrors.add(
+          'Fila $visualRow: Departamento y Sector son obligatorios.',
+        );
+        continue;
+      }
+
+      final sectorMatch = _resolveSectorReference(
+        reference: reference,
+        departmentName: departamentoNombre,
+        sectorName: sectorNombre,
+      );
+      if (sectorMatch == null) {
+        parseErrors.add(
+          'Fila $visualRow: Sector "$sectorNombre" no encontrado en Departamento "$departamentoNombre".',
+        );
+        continue;
+      }
+
+      final cargo = _cellText(_cellAt(row, cargoIndex!)).trim();
+      if (cargo.isEmpty) {
+        parseErrors.add('Fila $visualRow: Cargo es obligatorio.');
+        continue;
+      }
+
+      final lugarTrabajo = _cellText(_cellAt(row, lugarTrabajoIndex!)).trim();
+      if (lugarTrabajo.isEmpty) {
+        parseErrors.add('Fila $visualRow: Lugar trabajo es obligatorio.');
+        continue;
+      }
+
+      final salario = _cellToSalary(_cellAt(row, salarioIndex!));
+      if (salario == null || salario <= 0) {
+        parseErrors.add(
+          'Fila $visualRow: Salario invalido. Debe ser mayor que cero.',
+        );
+        continue;
+      }
+
+      final hireDate = fechaIngresoIndex == null
+          ? DateTime.now()
+          : (_cellDate(_cellAt(row, fechaIngresoIndex)) ?? DateTime.now());
+
+      final employeeTypeRaw = tipoIndex == null
+          ? ''
+          : _cellText(_cellAt(row, tipoIndex)).trim().toLowerCase();
+      final employeeType = employeeTypeRaw.isEmpty
+          ? 'mensual'
+          : employeeTypeRaw;
+      if (!_allowedImportEmployeeTypes.contains(employeeType)) {
+        parseErrors.add(
+          'Fila $visualRow: Tipo "$employeeTypeRaw" invalido (mensual, jornalero o servicio).',
+        );
+        continue;
+      }
+
+      final allowOvertime = horasExtraIndex == null
+          ? true
+          : (_parseBooleanCell(_cellAt(row, horasExtraIndex)) ?? true);
+      final active = estadoIndex == null
+          ? true
+          : (_parseBooleanCell(_cellAt(row, estadoIndex)) ?? true);
+      final ipsEnabled = ipsIndex == null
+          ? null
+          : _parseBooleanCell(_cellAt(row, ipsIndex));
+      final childrenCount = hijosIndex == null
+          ? 0
+          : (_cellToInteger(_cellAt(row, hijosIndex)) ?? 0);
+      if (childrenCount < 0) {
+        parseErrors.add(
+          'Fila $visualRow: Cantidad de hijos no puede ser negativa.',
+        );
+        continue;
+      }
+
+      final phone = telefonoIndex == null
+          ? null
+          : _toNullableText(_cellText(_cellAt(row, telefonoIndex)));
+      final address = direccionIndex == null
+          ? null
+          : _toNullableText(_cellText(_cellAt(row, direccionIndex)));
+
+      parsedRows.add(
+        _EmployeeImportDraft(
+          rowNumber: visualRow,
+          departmentId: sectorMatch.department.id,
+          sectorId: sectorMatch.sector.id,
+          firstNames: firstNames,
+          lastNames: lastNames,
+          documentNumber: documento,
+          jobTitle: cargo,
+          workLocation: lugarTrabajo,
+          hireDate: DateTime(hireDate.year, hireDate.month, hireDate.day),
+          employeeType: employeeType,
+          baseSalary: salario,
+          allowOvertime: allowOvertime,
+          active: active,
+          ipsEnabled: ipsEnabled,
+          childrenCount: childrenCount,
+          phone: phone,
+          address: address,
+        ),
+      );
+    }
+
+    return _EmployeeImportParseResult(rows: parsedRows, errors: parseErrors);
+  }
+
+  _EmployeeImportSectorReference? _resolveSectorReference({
+    required _EmployeeImportReference reference,
+    required String departmentName,
+    required String sectorName,
+  }) {
+    final normalizedDepartment = _normalizeImportLookupValue(departmentName);
+    final normalizedSector = _normalizeImportLookupValue(sectorName);
+    if (normalizedDepartment.isEmpty || normalizedSector.isEmpty) {
+      return null;
+    }
+
+    for (final entry in reference.sectors) {
+      final entryDepartment = _normalizeImportLookupValue(
+        entry.department.name,
+      );
+      final entrySector = _normalizeImportLookupValue(entry.sector.name);
+      if (entryDepartment == normalizedDepartment &&
+          entrySector == normalizedSector) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  Future<bool?> _confirmEmployeeImport({
+    required int rowsToImport,
+    required int rowsWithErrors,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Importar empleados'),
+        content: Text(
+          'Filas listas para importar: $rowsToImport\n'
+          'Filas con error (se omitiran): $rowsWithErrors\n\n'
+          'Desea continuar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Importar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEmployeeImportResultDialog({
+    required int imported,
+    required int failed,
+    required List<String> errors,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Resultado de importacion'),
+        content: SizedBox(
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Importados: $imported'),
+              Text('Con error: $failed'),
+              if (errors.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Detalle de errores:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  child: SingleChildScrollView(
+                    child: SelectableText(errors.join('\n')),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _normalizeImportHeader(String value) {
+    var normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return '';
+    }
+    const replacements = {
+      'á': 'a',
+      'é': 'e',
+      'í': 'i',
+      'ó': 'o',
+      'ú': 'u',
+      'ü': 'u',
+      'ñ': 'n',
+    };
+    replacements.forEach((from, to) {
+      normalized = normalized.replaceAll(from, to);
+    });
+    normalized = normalized.replaceAll(RegExp(r'[^a-z0-9]+'), ' ');
+    normalized = normalized.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return normalized;
+  }
+
+  String _normalizeImportLookupValue(String value) {
+    return _normalizeImportHeader(value);
+  }
+
+  xl.Data? _cellAt(List<xl.Data?> row, int index) {
+    if (index < 0 || index >= row.length) {
+      return null;
+    }
+    return row[index];
+  }
+
+  String _cellText(xl.Data? cell) {
+    final value = cell?.value;
+    if (value == null) {
+      return '';
+    }
+    return switch (value) {
+      xl.TextCellValue() => value.value.text?.trim() ?? '',
+      xl.IntCellValue() => value.value.toString(),
+      xl.DoubleCellValue() => value.value.toString(),
+      xl.BoolCellValue() => value.value ? 'true' : 'false',
+      xl.DateCellValue() =>
+        '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}',
+      xl.DateTimeCellValue() =>
+        '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}',
+      xl.TimeCellValue() => value.asDuration.toString(),
+      xl.FormulaCellValue() => value.formula.trim(),
+    };
+  }
+
+  bool _isExcelRowBlank(List<xl.Data?> row) {
+    for (final cell in row) {
+      if (_cellText(cell).trim().isNotEmpty) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  DateTime? _cellDate(xl.Data? cell) {
+    final value = cell?.value;
+    if (value == null) {
+      return null;
+    }
+    final parsed = switch (value) {
+      xl.DateCellValue() => value.asDateTimeLocal(),
+      xl.DateTimeCellValue() => value.asDateTimeLocal(),
+      xl.TextCellValue() => _tryParseImportDate(value.value.text ?? ''),
+      _ => _tryParseImportDate(_cellText(cell)),
+    };
+    if (parsed == null) {
+      return null;
+    }
+    return DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
+  DateTime? _tryParseImportDate(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    final iso = DateTime.tryParse(normalized);
+    if (iso != null) {
+      return DateTime(iso.year, iso.month, iso.day);
+    }
+
+    final compact = normalized.replaceAll('-', '/');
+    final parts = compact.split('/');
+    if (parts.length == 3) {
+      final p0 = int.tryParse(parts[0]);
+      final p1 = int.tryParse(parts[1]);
+      final p2 = int.tryParse(parts[2]);
+      if (p0 != null && p1 != null && p2 != null) {
+        if (parts[0].length == 4) {
+          return DateTime(p0, p1, p2);
+        }
+        return DateTime(p2, p1, p0);
+      }
+    }
+
+    return null;
+  }
+
+  double? _cellToSalary(xl.Data? cell) {
+    final value = cell?.value;
+    if (value == null) {
+      return null;
+    }
+
+    return switch (value) {
+      xl.IntCellValue() => value.value.toDouble(),
+      xl.DoubleCellValue() => value.value,
+      xl.TextCellValue() => GuaraniCurrency.parse(value.value.text ?? ''),
+      _ => GuaraniCurrency.parse(_cellText(cell)),
+    };
+  }
+
+  int? _cellToInteger(xl.Data? cell) {
+    final value = cell?.value;
+    if (value == null) {
+      return null;
+    }
+    return switch (value) {
+      xl.IntCellValue() => value.value,
+      xl.DoubleCellValue() => value.value.round(),
+      xl.TextCellValue() => int.tryParse(
+        (value.value.text ?? '').trim().replaceAll(RegExp(r'[^0-9-]'), ''),
+      ),
+      _ => int.tryParse(_cellText(cell).replaceAll(RegExp(r'[^0-9-]'), '')),
+    };
+  }
+
+  bool? _parseBooleanCell(xl.Data? cell) {
+    final raw = _cellText(cell).trim().toLowerCase();
+    if (raw.isEmpty) {
+      return null;
+    }
+    if (raw == 'true' ||
+        raw == '1' ||
+        raw == 'si' ||
+        raw == 'sí' ||
+        raw == 'activo' ||
+        raw == 'activa' ||
+        raw == 'yes' ||
+        raw == 'y') {
+      return true;
+    }
+    if (raw == 'false' ||
+        raw == '0' ||
+        raw == 'no' ||
+        raw == 'inactivo' ||
+        raw == 'inactiva' ||
+        raw == 'n') {
+      return false;
+    }
+    return null;
+  }
+
+  String? _toNullableText(String value) {
+    final normalized = value.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  String _normalizeDocumentLookup(String value) {
+    final trimmed = value.trim();
+    final digitsOnly = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digitsOnly.isNotEmpty) {
+      return digitsOnly;
+    }
+    return trimmed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   String _filteredEmployeesFileName() {
@@ -589,7 +1305,10 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
               const SizedBox(width: 12),
               OutlinedButton.icon(
                 onPressed:
-                    _isLoading || visibleEmployees.isEmpty || _isExportingExcel
+                    _isLoading ||
+                        visibleEmployees.isEmpty ||
+                        _isExportingExcel ||
+                        _isImportingExcel
                     ? null
                     : _exportFilteredEmployeesExcel,
                 icon: const Icon(Icons.table_view),
@@ -597,9 +1316,21 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
                   _isExportingExcel ? 'Exportando...' : 'Exportar Excel',
                 ),
               ),
+              if (widget.isSuperAdmin) ...[
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: _isLoading || _isImportingExcel
+                      ? null
+                      : _importEmployeesFromExcel,
+                  icon: const Icon(Icons.upload_file),
+                  label: Text(
+                    _isImportingExcel ? 'Importando...' : 'Importar Excel',
+                  ),
+                ),
+              ],
               const SizedBox(width: 12),
               FilledButton.icon(
-                onPressed: widget.canCreateEmployee
+                onPressed: widget.canCreateEmployee && !_isImportingExcel
                     ? () => _openEmployeeForm()
                     : null,
                 icon: const Icon(Icons.person_add),
@@ -729,6 +1460,79 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 }
 
 enum _EmployeesOvertimeFilter { todos, activa, inactiva }
+
+const Set<String> _allowedImportEmployeeTypes = {
+  'mensual',
+  'jornalero',
+  'servicio',
+};
+
+class _EmployeeImportReference {
+  const _EmployeeImportReference({
+    required this.departments,
+    required this.sectors,
+  });
+
+  final List<Department> departments;
+  final List<_EmployeeImportSectorReference> sectors;
+}
+
+class _EmployeeImportSectorReference {
+  const _EmployeeImportSectorReference({
+    required this.department,
+    required this.sector,
+  });
+
+  final Department department;
+  final DepartmentSector sector;
+}
+
+class _EmployeeImportDraft {
+  const _EmployeeImportDraft({
+    required this.rowNumber,
+    required this.departmentId,
+    required this.sectorId,
+    required this.firstNames,
+    required this.lastNames,
+    required this.documentNumber,
+    required this.jobTitle,
+    required this.workLocation,
+    required this.hireDate,
+    required this.employeeType,
+    required this.baseSalary,
+    required this.allowOvertime,
+    required this.active,
+    required this.ipsEnabled,
+    required this.childrenCount,
+    required this.phone,
+    required this.address,
+  });
+
+  final int rowNumber;
+  final int departmentId;
+  final int sectorId;
+  final String firstNames;
+  final String lastNames;
+  final String documentNumber;
+  final String jobTitle;
+  final String workLocation;
+  final DateTime hireDate;
+  final String employeeType;
+  final double baseSalary;
+  final bool allowOvertime;
+  final bool active;
+  final bool? ipsEnabled;
+  final int childrenCount;
+  final String? phone;
+  final String? address;
+}
+
+class _EmployeeImportParseResult {
+  const _EmployeeImportParseResult({required this.rows, required this.errors});
+
+  final List<_EmployeeImportDraft> rows;
+  final List<String> errors;
+}
 
 class _EmployeesPrintPreviewScreen extends StatelessWidget {
   const _EmployeesPrintPreviewScreen({

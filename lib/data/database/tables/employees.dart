@@ -69,7 +69,7 @@ class Employees extends Table {
       text().named('work_start_time_1').withDefault(const Constant('06:00'))();
 
   TextColumn get workStartTime2 =>
-      text().named('work_start_time_2').withDefault(const Constant('15:00'))();
+      text().named('work_start_time_2').withDefault(const Constant('14:00'))();
 
   TextColumn get workStartTime3 =>
       text().named('work_start_time_3').withDefault(const Constant('18:00'))();

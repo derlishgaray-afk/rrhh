@@ -138,12 +138,12 @@ class _RrhhAppState extends State<RrhhApp> {
 
   Future<void> _checkSession() async {
     try {
-      final isLoggedIn = await widget.authService.isSessionActive();
+      await widget.authService.logout();
       if (!mounted) {
         return;
       }
       setState(() {
-        _isLoggedIn = isLoggedIn;
+        _isLoggedIn = false;
         _isCheckingSession = false;
       });
     } catch (_) {

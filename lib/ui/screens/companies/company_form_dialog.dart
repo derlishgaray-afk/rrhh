@@ -62,6 +62,10 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
   }
 
   Future<void> _save() async {
+    if (_isSaving) {
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -103,8 +107,8 @@ class _CompanyFormDialogState extends State<CompanyFormDialog> {
       Navigator.of(context).pop(true);
     } on ArgumentError catch (error) {
       _showError(error.message?.toString() ?? 'Datos invalidos.');
-    } catch (_) {
-      _showError('No se pudo guardar la empresa.');
+    } catch (error) {
+      _showError('No se pudo guardar la empresa: $error');
     } finally {
       if (mounted) {
         setState(() {

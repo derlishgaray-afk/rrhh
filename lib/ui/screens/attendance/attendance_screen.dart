@@ -16,6 +16,7 @@ import '../../../services/attendance_notes_markers.dart';
 import '../../../services/company_settings_service.dart';
 import '../../../services/employee_name_formatter.dart';
 import '../../../services/employees_service.dart';
+import '../../utils/safe_excel_decoder.dart';
 
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({
@@ -215,29 +216,47 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
 
     try {
-      final results = await Future.wait<dynamic>([
-        widget.employeesService.listActiveEmployeesByCompany(widget.companyId),
-        widget.service.listAttendanceByMonth(
-          companyId: widget.companyId,
-          year: _selectedYear,
-          month: _selectedMonth,
-        ),
-        widget.companySettingsService.getOrCreateSettings(widget.companyId),
-        widget.service.isAttendancePeriodLocked(
-          companyId: widget.companyId,
-          year: _selectedYear,
-          month: _selectedMonth,
-        ),
-      ]);
+      final activeEmployees = await widget.employeesService
+          .listActiveEmployeesByCompany(widget.companyId);
+      List<AttendanceEvent> events = const [];
+      Set<DateTime> holidayDates = <DateTime>{};
+      var isPeriodLocked = false;
+      String? partialError;
 
-      final activeEmployees = results[0] as List<Employee>;
-      final events = results[1] as List<AttendanceEvent>;
-      final settings = results[2] as CompanySetting;
-      final isPeriodLocked = results[3] as bool;
+      try {
+        events = await widget.service.listAttendanceByMonth(
+          companyId: widget.companyId,
+          year: _selectedYear,
+          month: _selectedMonth,
+        );
+      } catch (error) {
+        partialError ??=
+            'No se pudo cargar eventos del mes: ${error.toString()}';
+      }
+
+      try {
+        final settings = await widget.companySettingsService
+            .getOrCreateSettings(widget.companyId);
+        holidayDates = widget.companySettingsService.parseHolidayDates(
+          settings.holidayDates,
+        );
+      } catch (error) {
+        partialError ??=
+            'No se pudo cargar configuracion de empresa: ${error.toString()}';
+      }
+
+      try {
+        isPeriodLocked = await widget.service.isAttendancePeriodLocked(
+          companyId: widget.companyId,
+          year: _selectedYear,
+          month: _selectedMonth,
+        );
+      } catch (error) {
+        partialError ??=
+            'No se pudo validar bloqueo de liquidacion: ${error.toString()}';
+      }
+
       final rows = _buildRows(employees: activeEmployees, events: events);
-      final holidayDates = widget.companySettingsService.parseHolidayDates(
-        settings.holidayDates,
-      );
 
       if (!mounted) {
         for (final row in rows.values) {
@@ -253,6 +272,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _isSelectedPeriodLocked = isPeriodLocked;
         _replaceRows(rows);
       });
+
+      if (partialError != null && !silentErrors) {
+        _showError(partialError);
+      }
     } catch (_) {
       if (silentErrors) {
         return;
@@ -271,20 +294,28 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Future<void> _reloadMonthEvents() async {
-    final results = await Future.wait<dynamic>([
-      widget.service.listAttendanceByMonth(
+    List<AttendanceEvent> events = const [];
+    var isPeriodLocked = false;
+
+    try {
+      events = await widget.service.listAttendanceByMonth(
         companyId: widget.companyId,
         year: _selectedYear,
         month: _selectedMonth,
-      ),
-      widget.service.isAttendancePeriodLocked(
+      );
+    } catch (error) {
+      _showError('No se pudo recargar eventos del mes: ${error.toString()}');
+    }
+
+    try {
+      isPeriodLocked = await widget.service.isAttendancePeriodLocked(
         companyId: widget.companyId,
         year: _selectedYear,
         month: _selectedMonth,
-      ),
-    ]);
-    final events = results[0] as List<AttendanceEvent>;
-    final isPeriodLocked = results[1] as bool;
+      );
+    } catch (error) {
+      _showError('No se pudo validar bloqueo del periodo: ${error.toString()}');
+    }
 
     final rows = _buildRows(employees: _activeEmployees, events: events);
     if (!mounted) {
@@ -759,7 +790,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
       final payload = bytes ?? await File(filePath!).readAsBytes();
 
-      final workbook = xl.Excel.decodeBytes(payload);
+      final workbook = decodeExcelBytesSafe(payload);
       if (workbook.tables.isEmpty) {
         throw ArgumentError('El archivo no contiene hojas para importar.');
       }

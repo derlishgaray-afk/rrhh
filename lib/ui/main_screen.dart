@@ -352,6 +352,7 @@ class _MainScreenState extends State<MainScreen> {
           departmentService: widget.departmentService,
           companyId: _activeCompanyId!,
           companyName: _activeCompanyName,
+          isSuperAdmin: _isSuperAdmin,
           canCreateEmployee: _hasPermission(PermissionKeys.employeesCreate),
           canUpdateEmployee: _hasPermission(PermissionKeys.employeesUpdate),
           canDeleteEmployee: _hasPermission(PermissionKeys.employeesDelete),

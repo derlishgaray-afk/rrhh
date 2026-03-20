@@ -1903,7 +1903,7 @@ class $EmployeesTable extends Employees
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: false,
-    defaultValue: const Constant('15:00'),
+    defaultValue: const Constant('14:00'),
   );
   static const VerificationMeta _workStartTime3Meta = const VerificationMeta(
     'workStartTime3',

@@ -40,54 +40,44 @@ class CompanyService {
       throw ArgumentError('El nombre de la empresa es obligatorio.');
     }
 
-    final companyId = await _companiesDao.insertCompany(
-      CompaniesCompanion.insert(
-        name: normalizedName,
-        abbreviation: _toOptionalValue(abbreviation),
-        ruc: _toOptionalValue(ruc),
-        address: _toOptionalValue(address),
-        phone: _toOptionalValue(phone),
-        mjtEmployerNumber: _toOptionalValue(mjtEmployerNumber),
-        logoPng: Value(logoPng),
-        active: Value(active),
-      ),
-    );
-    final template = await _companySettingsDao.getMostRecentlyUpdatedSettings(
-      excludeCompanyId: companyId,
-    );
-    await _companySettingsDao.upsertCompanySettings(
-      template == null
-          ? CompanySettingsCompanion.insert(companyId: Value(companyId))
-          : CompanySettingsCompanion.insert(
-              companyId: Value(companyId),
-              ipsEmployeeRate: Value(template.ipsEmployeeRate),
-              ipsEmployerRate: Value(template.ipsEmployerRate),
-              minimumWage: Value(template.minimumWage),
-              familyBonusRate: Value(template.familyBonusRate),
-              overtimeDayRate: Value(template.overtimeDayRate),
-              overtimeNightRate: Value(template.overtimeNightRate),
-              ordinaryNightSurchargeRate: Value(
-                template.ordinaryNightSurchargeRate,
-              ),
-              ordinaryNightStart: Value(template.ordinaryNightStart),
-              ordinaryNightEnd: Value(template.ordinaryNightEnd),
-              overtimeDayStart: Value(template.overtimeDayStart),
-              overtimeDayEnd: Value(template.overtimeDayEnd),
-              overtimeNightStart: Value(template.overtimeNightStart),
-              overtimeNightEnd: Value(template.overtimeNightEnd),
-              holidayDates: Value(template.holidayDates),
-              updatedAt: Value(DateTime.now()),
-            ),
-    );
+    int? createdCompanyId;
+    try {
+      final companyId = await _companiesDao.insertCompany(
+        CompaniesCompanion.insert(
+          name: normalizedName,
+          abbreviation: _toOptionalValue(abbreviation),
+          ruc: _toOptionalValue(ruc),
+          address: _toOptionalValue(address),
+          phone: _toOptionalValue(phone),
+          mjtEmployerNumber: _toOptionalValue(mjtEmployerNumber),
+          logoPng: Value(logoPng),
+          active: Value(active),
+        ),
+      );
+      createdCompanyId = companyId;
 
-    await _grantSuperAdminAccessToCompany(companyId);
+      await _companySettingsDao.upsertCompanySettings(
+        CompanySettingsCompanion.insert(companyId: Value(companyId)),
+      );
 
-    final activeCompany = await getActiveCompany();
-    if (activeCompany == null) {
-      await setActiveCompany(companyId);
+      try {
+        await _grantSuperAdminAccessToCompany(companyId);
+      } catch (_) {}
+
+      final activeCompany = await getActiveCompany();
+      if (activeCompany == null) {
+        await setActiveCompany(companyId);
+      }
+
+      return companyId;
+    } catch (_) {
+      if (createdCompanyId != null) {
+        try {
+          await _companiesDao.deleteCompany(createdCompanyId);
+        } catch (_) {}
+      }
+      rethrow;
     }
-
-    return companyId;
   }
 
   Future<bool> updateCompany({

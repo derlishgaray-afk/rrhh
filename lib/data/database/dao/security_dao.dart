@@ -122,23 +122,59 @@ class SecurityDao extends DatabaseAccessor<AppDatabase>
     required int userId,
     required int companyId,
   }) {
-    return (select(userCompanyAccess)..where(
-          (tbl) => tbl.userId.equals(userId) & tbl.companyId.equals(companyId),
-        ))
+    return (select(userCompanyAccess)
+          ..where(
+            (tbl) =>
+                tbl.userId.equals(userId) & tbl.companyId.equals(companyId),
+          )
+          ..orderBy([(tbl) => OrderingTerm.desc(tbl.id)])
+          ..limit(1))
         .getSingleOrNull();
   }
 
-  Future<int> upsertUserCompanyAccess(UserCompanyAccessCompanion companion) {
-    return into(userCompanyAccess).insert(
-      companion,
-      onConflict: DoUpdate(
-        (_) => UserCompanyAccessCompanion(
-          roleId: companion.roleId,
-          active: companion.active,
-        ),
-        target: [userCompanyAccess.userId, userCompanyAccess.companyId],
-      ),
-    );
+  Future<int> upsertUserCompanyAccess(
+    UserCompanyAccessCompanion companion,
+  ) async {
+    final userId = companion.userId.present ? companion.userId.value : null;
+    final companyId = companion.companyId.present
+        ? companion.companyId.value
+        : null;
+    if (userId == null || companyId == null) {
+      throw ArgumentError('userId y companyId son obligatorios.');
+    }
+
+    final existing =
+        await (select(userCompanyAccess)
+              ..where(
+                (tbl) =>
+                    tbl.userId.equals(userId) & tbl.companyId.equals(companyId),
+              )
+              ..orderBy([(tbl) => OrderingTerm.asc(tbl.id)]))
+            .get();
+
+    if (existing.isEmpty) {
+      return into(userCompanyAccess).insert(companion);
+    }
+
+    final primary = existing.first;
+    final roleId = companion.roleId.present
+        ? companion.roleId
+        : Value(primary.roleId);
+    final active = companion.active.present
+        ? companion.active
+        : Value(primary.active);
+
+    await (update(userCompanyAccess)..where((tbl) => tbl.id.equals(primary.id)))
+        .write(UserCompanyAccessCompanion(roleId: roleId, active: active));
+
+    if (existing.length > 1) {
+      final duplicateIds = existing.skip(1).map((row) => row.id).toList();
+      await (delete(
+        userCompanyAccess,
+      )..where((tbl) => tbl.id.isIn(duplicateIds))).go();
+    }
+
+    return primary.id;
   }
 
   Future<List<UserCompanyAccessData>> getUserCompanyAccessByUser(int userId) {

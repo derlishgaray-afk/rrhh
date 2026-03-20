@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -32,7 +31,6 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   static const int _allCompaniesValue = 0;
-  static const Duration _autoRefreshInterval = Duration(seconds: 12);
 
   static const List<String> _monthNames = [
     'Enero',
@@ -87,7 +85,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
   List<_DepartmentReportRow> _departmentReportRows = const [];
   List<_SectorReportRow> _sectorReportRows = const [];
   List<ReportsEmployeeSummary> _employeeReportRows = const [];
-  Timer? _autoRefreshTimer;
   final Map<String, ScrollController> _horizontalTableControllers =
       <String, ScrollController>{};
   final TextEditingController _employeeReportQueryController =
@@ -144,42 +141,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _employeeReportStartDate = DateTime(now.year, now.month, 1);
     _employeeReportEndDate = DateTime(now.year, now.month, now.day);
     _loadContextData(preferredCompanyId: widget.companyId);
-    _startAutoRefresh();
   }
 
   @override
   void dispose() {
-    _autoRefreshTimer?.cancel();
     for (final controller in _horizontalTableControllers.values) {
       controller.dispose();
     }
     _employeeReportQueryController.dispose();
     super.dispose();
-  }
-
-  void _startAutoRefresh() {
-    _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
-      if (!mounted ||
-          _isFetchingContext ||
-          _isLoading ||
-          _isOutputBusy ||
-          _isLoadingByCompanyReport ||
-          _isLoadingByDepartmentReport ||
-          _isLoadingBySectorReport ||
-          _isLoadingByEmployeeReport) {
-        return;
-      }
-      final selectedCompanyId = _selectedCompanyId;
-      _loadContextData(
-        preferredCompanyId: selectedCompanyId == _allCompaniesValue
-            ? widget.companyId
-            : selectedCompanyId,
-        selectAllCompanies: selectedCompanyId == _allCompaniesValue,
-        showLoader: false,
-        silentErrors: true,
-      );
-    });
   }
 
   @override

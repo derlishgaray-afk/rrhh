@@ -43,7 +43,7 @@ class _EmployeeFormDialogState extends State<EmployeeFormDialog> {
   final _embargoAccountController = TextEditingController();
   final _embargoAmountController = TextEditingController();
   final _workStartTime1Controller = TextEditingController(text: '06:00');
-  final _workStartTime2Controller = TextEditingController(text: '15:00');
+  final _workStartTime2Controller = TextEditingController(text: '14:00');
   final _workStartTime3Controller = TextEditingController(text: '18:00');
   final _workStartTimeSaturdayController = TextEditingController();
   final _workEndTimeSaturdayController = TextEditingController();
