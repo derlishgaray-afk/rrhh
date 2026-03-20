@@ -52,6 +52,7 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 
   Timer? _autoRefreshTimer;
   List<Employee> _employees = const [];
+  Map<int, String> _departmentNamesById = const {};
   Map<int, String> _sectorNamesById = const {};
   _EmployeesOvertimeFilter _overtimeFilter = _EmployeesOvertimeFilter.todos;
   bool _isLoading = false;
@@ -117,9 +118,9 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
       final employeesFuture = query.isEmpty
           ? widget.service.listEmployeesByCompany(widget.companyId)
           : widget.service.searchEmployeesByName(widget.companyId, query);
-      final sectorNamesFuture = _loadSectorNamesById();
+      final organizationNamesFuture = _loadOrganizationNames();
       final employees = await employeesFuture;
-      final sectorNames = await sectorNamesFuture;
+      final organizationNames = await organizationNamesFuture;
 
       if (!mounted) {
         return;
@@ -127,7 +128,8 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 
       setState(() {
         _employees = employees;
-        _sectorNamesById = sectorNames;
+        _departmentNamesById = organizationNames.departmentNamesById;
+        _sectorNamesById = organizationNames.sectorNamesById;
       });
     } catch (_) {
       if (!mounted) {
@@ -242,12 +244,23 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<Map<int, String>> _loadSectorNamesById() async {
+  Future<
+    ({Map<int, String> departmentNamesById, Map<int, String> sectorNamesById})
+  >
+  _loadOrganizationNames() async {
     try {
       final departments = await widget.departmentService
           .listDepartmentsByCompany(widget.companyId);
       if (departments.isEmpty) {
-        return const {};
+        return (
+          departmentNamesById: const <int, String>{},
+          sectorNamesById: const <int, String>{},
+        );
+      }
+
+      final departmentMap = <int, String>{};
+      for (final department in departments) {
+        departmentMap[department.id] = department.name;
       }
 
       final sectorLists = await Future.wait(
@@ -257,16 +270,27 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
         ),
       );
 
-      final map = <int, String>{};
+      final sectorMap = <int, String>{};
       for (final sectors in sectorLists) {
         for (final sector in sectors) {
-          map[sector.id] = sector.name;
+          sectorMap[sector.id] = sector.name;
         }
       }
-      return map;
+      return (departmentNamesById: departmentMap, sectorNamesById: sectorMap);
     } catch (_) {
-      return const {};
+      return (
+        departmentNamesById: const <int, String>{},
+        sectorNamesById: const <int, String>{},
+      );
     }
+  }
+
+  String _departmentName(Employee employee) {
+    final departmentId = employee.departmentId;
+    if (departmentId == null) {
+      return '-';
+    }
+    return _departmentNamesById[departmentId] ?? '-';
   }
 
   String _sectorName(Employee employee) {
@@ -478,10 +502,17 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
             ipsEnabled: row.ipsEnabled,
             childrenCount: row.childrenCount,
             allowOvertime: row.allowOvertime,
-            biometricClockEnabled: true,
-            hasEmbargo: false,
+            biometricClockEnabled: row.biometricClockEnabled,
+            hasEmbargo: row.hasEmbargo,
+            embargoAccount: row.embargoAccount,
+            embargoAmount: row.embargoAmount,
             phone: row.phone,
             address: row.address,
+            workStartTime1: row.workStartTime1,
+            workStartTime2: row.workStartTime2,
+            workStartTime3: row.workStartTime3,
+            workStartTimeSaturday: row.workStartTimeSaturday,
+            workEndTimeSaturday: row.workEndTimeSaturday,
             active: row.active,
           );
           imported += 1;
@@ -608,9 +639,64 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
     ]);
     final estadoIndex = findHeader(const ['estado', 'activo']);
     final ipsIndex = findHeader(const ['ips', 'aporta ips']);
-    final hijosIndex = findHeader(const ['hijos', 'cantidad hijos']);
+    final hijosIndex = findHeader(const [
+      'hijos',
+      'cantidad hijos',
+      'cantidad de hijos',
+    ]);
     final telefonoIndex = findHeader(const ['telefono', 'tel']);
     final direccionIndex = findHeader(const ['direccion', 'domicilio']);
+    final biometricIndex = findHeader(const [
+      'reloj biometrico',
+      'biometrico',
+      'biometrico habilitado',
+    ]);
+    final hasEmbargoIndex = findHeader(const [
+      'tiene embargo',
+      'embargo',
+      'posee embargo',
+    ]);
+    final embargoAccountIndex = findHeader(const [
+      'cuenta embargo',
+      'cuenta de embargo',
+    ]);
+    final embargoAmountIndex = findHeader(const [
+      'monto embargo',
+      'importe embargo',
+    ]);
+    final workStartTime1Index = findHeader(const [
+      'horario inicio 1',
+      'horarios de inicio laboral 1',
+      'horario de inicio laboral 1',
+      'inicio laboral 1',
+      'horario 1',
+    ]);
+    final workStartTime2Index = findHeader(const [
+      'horario inicio 2',
+      'horarios de inicio laboral 2',
+      'horario de inicio laboral 2',
+      'inicio laboral 2',
+      'horario 2',
+    ]);
+    final workStartTime3Index = findHeader(const [
+      'horario inicio 3',
+      'horarios de inicio laboral 3',
+      'horario de inicio laboral 3',
+      'inicio laboral 3',
+      'horario 3',
+    ]);
+    final workStartTimeSaturdayIndex = findHeader(const [
+      'inicio sabado',
+      'horario inicio sabado',
+      'horario de inicio sabado',
+      'inicio laboral sabado',
+    ]);
+    final workEndTimeSaturdayIndex = findHeader(const [
+      'salida sabado',
+      'horario salida sabado',
+      'horario de salida sabado',
+      'fin laboral sabado',
+    ]);
 
     final missingColumns = <String>[];
     if (documentoIndex == null) {
@@ -781,12 +867,86 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
         continue;
       }
 
+      final workStartTime1 = _readOptionalTimeCell(
+        row: row,
+        index: workStartTime1Index,
+        rowNumber: visualRow,
+        fieldLabel: 'Horario de inicio laboral 1',
+        errors: parseErrors,
+      );
+      if (workStartTime1 == _invalidImportTimeValue) {
+        continue;
+      }
+
+      final workStartTime2 = _readOptionalTimeCell(
+        row: row,
+        index: workStartTime2Index,
+        rowNumber: visualRow,
+        fieldLabel: 'Horario de inicio laboral 2',
+        errors: parseErrors,
+      );
+      if (workStartTime2 == _invalidImportTimeValue) {
+        continue;
+      }
+
+      final workStartTime3 = _readOptionalTimeCell(
+        row: row,
+        index: workStartTime3Index,
+        rowNumber: visualRow,
+        fieldLabel: 'Horario de inicio laboral 3',
+        errors: parseErrors,
+      );
+      if (workStartTime3 == _invalidImportTimeValue) {
+        continue;
+      }
+
       final phone = telefonoIndex == null
           ? null
           : _toNullableText(_cellText(_cellAt(row, telefonoIndex)));
       final address = direccionIndex == null
           ? null
           : _toNullableText(_cellText(_cellAt(row, direccionIndex)));
+      final biometricClockEnabled = biometricIndex == null
+          ? true
+          : (_parseBooleanCell(_cellAt(row, biometricIndex)) ?? true);
+      final hasEmbargo = hasEmbargoIndex == null
+          ? false
+          : (_parseBooleanCell(_cellAt(row, hasEmbargoIndex)) ?? false);
+      final embargoAccount = embargoAccountIndex == null
+          ? null
+          : _toNullableText(_cellText(_cellAt(row, embargoAccountIndex)));
+      final embargoAmount = embargoAmountIndex == null
+          ? null
+          : _cellToSalary(_cellAt(row, embargoAmountIndex));
+
+      if (hasEmbargo && (embargoAmount == null || embargoAmount <= 0)) {
+        parseErrors.add(
+          'Fila $visualRow: Monto embargo invalido. Debe ser mayor que cero.',
+        );
+        continue;
+      }
+
+      final workStartTimeSaturday = _readOptionalTimeCell(
+        row: row,
+        index: workStartTimeSaturdayIndex,
+        rowNumber: visualRow,
+        fieldLabel: 'Inicio sabado',
+        errors: parseErrors,
+      );
+      if (workStartTimeSaturday == _invalidImportTimeValue) {
+        continue;
+      }
+
+      final workEndTimeSaturday = _readOptionalTimeCell(
+        row: row,
+        index: workEndTimeSaturdayIndex,
+        rowNumber: visualRow,
+        fieldLabel: 'Salida sabado',
+        errors: parseErrors,
+      );
+      if (workEndTimeSaturday == _invalidImportTimeValue) {
+        continue;
+      }
 
       parsedRows.add(
         _EmployeeImportDraft(
@@ -805,8 +965,17 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
           active: active,
           ipsEnabled: ipsEnabled,
           childrenCount: childrenCount,
+          biometricClockEnabled: biometricClockEnabled,
+          hasEmbargo: hasEmbargo,
+          embargoAccount: embargoAccount,
+          embargoAmount: embargoAmount,
           phone: phone,
           address: address,
+          workStartTime1: workStartTime1,
+          workStartTime2: workStartTime2,
+          workStartTime3: workStartTime3,
+          workStartTimeSaturday: workStartTimeSaturday,
+          workEndTimeSaturday: workEndTimeSaturday,
         ),
       );
     }
@@ -1072,7 +1241,84 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 
   String? _toNullableText(String value) {
     final normalized = value.trim();
-    return normalized.isEmpty ? null : normalized;
+    if (normalized.isEmpty || normalized == '-') {
+      return null;
+    }
+    return normalized;
+  }
+
+  String? _readOptionalTimeCell({
+    required List<xl.Data?> row,
+    required int? index,
+    required int rowNumber,
+    required String fieldLabel,
+    required List<String> errors,
+  }) {
+    if (index == null) {
+      return null;
+    }
+
+    final cell = _cellAt(row, index);
+    final value = cell?.value;
+    if (value == null) {
+      return null;
+    }
+
+    final normalized = switch (value) {
+      xl.TimeCellValue() =>
+        '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}',
+      xl.DateTimeCellValue() =>
+        '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}',
+      xl.TextCellValue() => _normalizeImportTime(value.value.text ?? ''),
+      _ => _normalizeImportTime(_cellText(cell)),
+    };
+
+    final rawText = _cellText(cell).trim();
+    if (normalized == null && (rawText.isEmpty || rawText == '-')) {
+      return null;
+    }
+
+    if (normalized == null) {
+      errors.add('Fila $rowNumber: $fieldLabel invalido. Use HH:mm.');
+      return _invalidImportTimeValue;
+    }
+
+    return normalized;
+  }
+
+  String? _normalizeImportTime(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    final digitsOnly = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    int? hour;
+    int? minute;
+    if (digitsOnly.length == 1 || digitsOnly.length == 2) {
+      hour = int.tryParse(digitsOnly);
+      minute = 0;
+    } else if (digitsOnly.length == 3) {
+      hour = int.tryParse(digitsOnly.substring(0, 1));
+      minute = int.tryParse(digitsOnly.substring(1, 3));
+    } else if (digitsOnly.length == 4) {
+      hour = int.tryParse(digitsOnly.substring(0, 2));
+      minute = int.tryParse(digitsOnly.substring(2, 4));
+    } else {
+      final match = RegExp(r'^(\d{1,2})[:.,](\d{2})$').firstMatch(trimmed);
+      if (match != null) {
+        hour = int.tryParse(match.group(1)!);
+        minute = int.tryParse(match.group(2)!);
+      }
+    }
+
+    if (hour == null || minute == null) {
+      return null;
+    }
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
   }
 
   String _normalizeDocumentLookup(String value) {
@@ -1112,14 +1358,38 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
     final sheet = workbook[sheetName];
 
     const headers = [
+      'ID',
+      'Empresa',
+      'Company ID',
+      'Nombres',
+      'Apellidos',
       'Nombre',
       'Documento',
+      'Department ID',
+      'Departamento',
+      'Sector ID',
       'Sector',
       'Cargo',
       'Lugar trabajo',
+      'Fecha ingreso',
+      'Tipo empleado',
+      'IPS',
+      'Cantidad hijos',
       'Horas extra',
+      'Reloj biometrico',
+      'Tiene embargo',
+      'Cuenta embargo',
+      'Monto embargo',
+      'Telefono',
+      'Direccion',
+      'Horario inicio 1',
+      'Horario inicio 2',
+      'Horario inicio 3',
+      'Inicio sabado',
+      'Salida sabado',
       'Salario',
       'Estado',
+      'Creado el',
     ];
 
     for (var col = 0; col < headers.length; col++) {
@@ -1130,14 +1400,40 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
     for (var row = 0; row < employees.length; row++) {
       final employee = employees[row];
       final values = [
+        employee.id.toString(),
+        widget.companyName,
+        employee.companyId.toString(),
+        employee.firstNames,
+        employee.lastNames,
         employeeDisplayName(employee),
         employee.documentNumber,
+        employee.departmentId?.toString() ?? '',
+        _departmentName(employee),
+        employee.sectorId?.toString() ?? '',
         _sectorName(employee),
         employee.jobTitle ?? '-',
         employee.workLocation ?? '-',
+        _formatDate(employee.hireDate),
+        _employeeTypeLabel(employee.employeeType),
+        _boolLabel(employee.ipsEnabled),
+        employee.childrenCount.toString(),
         employee.allowOvertime ? 'Activa' : 'Inactiva',
-        _formatSalary(employee.baseSalary),
+        _boolLabel(employee.biometricClockEnabled),
+        _boolLabel(employee.hasEmbargo),
+        employee.embargoAccount ?? '-',
+        employee.embargoAmount == null
+            ? '-'
+            : GuaraniCurrency.formatPlain(employee.embargoAmount!),
+        employee.phone ?? '-',
+        employee.address ?? '-',
+        employee.workStartTime1,
+        employee.workStartTime2,
+        employee.workStartTime3,
+        employee.workStartTimeSaturday ?? '-',
+        employee.workEndTimeSaturday ?? '-',
+        GuaraniCurrency.formatPlain(employee.baseSalary),
         employee.active ? 'Activo' : 'Inactivo',
+        _formatDateTime(employee.createdAt),
       ];
 
       for (var col = 0; col < values.length; col++) {
@@ -1244,6 +1540,29 @@ class _EmployeesListScreenState extends State<EmployeesListScreen> {
 
     return document.save();
   }
+
+  String _formatDate(DateTime value) {
+    return '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+  }
+
+  String _formatDateTime(DateTime value) {
+    return '${_formatDate(value)} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _employeeTypeLabel(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'mensual':
+        return 'Mensual';
+      case 'jornalero':
+        return 'Jornalero';
+      case 'servicio':
+        return 'Servicio';
+      default:
+        return value;
+    }
+  }
+
+  String _boolLabel(bool value) => value ? 'Si' : 'No';
 
   @override
   Widget build(BuildContext context) {
@@ -1467,6 +1786,8 @@ const Set<String> _allowedImportEmployeeTypes = {
   'servicio',
 };
 
+const String _invalidImportTimeValue = '__INVALID_IMPORT_TIME__';
+
 class _EmployeeImportReference {
   const _EmployeeImportReference({
     required this.departments,
@@ -1504,8 +1825,17 @@ class _EmployeeImportDraft {
     required this.active,
     required this.ipsEnabled,
     required this.childrenCount,
+    required this.biometricClockEnabled,
+    required this.hasEmbargo,
+    required this.embargoAccount,
+    required this.embargoAmount,
     required this.phone,
     required this.address,
+    required this.workStartTime1,
+    required this.workStartTime2,
+    required this.workStartTime3,
+    required this.workStartTimeSaturday,
+    required this.workEndTimeSaturday,
   });
 
   final int rowNumber;
@@ -1523,8 +1853,17 @@ class _EmployeeImportDraft {
   final bool active;
   final bool? ipsEnabled;
   final int childrenCount;
+  final bool biometricClockEnabled;
+  final bool hasEmbargo;
+  final String? embargoAccount;
+  final double? embargoAmount;
   final String? phone;
   final String? address;
+  final String? workStartTime1;
+  final String? workStartTime2;
+  final String? workStartTime3;
+  final String? workStartTimeSaturday;
+  final String? workEndTimeSaturday;
 }
 
 class _EmployeeImportParseResult {

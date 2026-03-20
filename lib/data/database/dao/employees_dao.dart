@@ -82,25 +82,47 @@ class EmployeesDao extends DatabaseAccessor<AppDatabase>
   }
 
   Future<List<Employee>> searchEmployeesByName(int companyId, String query) {
-    final normalizedQuery = query.trim();
+    final normalizedQuery = _normalizeSearchText(query);
     if (normalizedQuery.isEmpty) {
       return getEmployeesByCompany(companyId);
     }
 
-    return (select(employees)
-          ..where(
-            (tbl) =>
-                tbl.companyId.equals(companyId) &
-                (tbl.firstNames.like('%$normalizedQuery%') |
-                    tbl.lastNames.like('%$normalizedQuery%') |
-                    tbl.fullName.like('%$normalizedQuery%') |
-                    tbl.documentNumber.like('%$normalizedQuery%') |
-                    tbl.workLocation.like('%$normalizedQuery%')),
-          )
-          ..orderBy([
-            (tbl) => OrderingTerm.asc(tbl.lastNames),
-            (tbl) => OrderingTerm.asc(tbl.firstNames),
-          ]))
-        .get();
+    return getEmployeesByCompany(companyId).then(
+      (rows) => rows.where((employee) {
+        final searchableValues = <String>[
+          employee.firstNames,
+          employee.lastNames,
+          employee.fullName,
+          employee.documentNumber,
+          employee.workLocation ?? '',
+        ];
+        return searchableValues.any(
+          (value) => _normalizeSearchText(value).contains(normalizedQuery),
+        );
+      }).toList(),
+    );
+  }
+
+  String _normalizeSearchText(String value) {
+    var normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return '';
+    }
+
+    const replacements = {
+      'á': 'a',
+      'é': 'e',
+      'í': 'i',
+      'ó': 'o',
+      'ú': 'u',
+      'ü': 'u',
+      'ñ': 'n',
+    };
+    replacements.forEach((from, to) {
+      normalized = normalized.replaceAll(from, to);
+    });
+
+    normalized = normalized.replaceAll(RegExp(r'\s+'), ' ');
+    return normalized;
   }
 }
